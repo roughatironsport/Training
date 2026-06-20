@@ -64,7 +64,8 @@ def require_login() -> str | None:
 
 
 def logout_button() -> None:
-    """Zeichnet einen Logout-Button (für die Sidebar)."""
-    if st.button("Abmelden"):
+    """Zeichnet einen Logout-Button in der Sidebar (volle Breite)."""
+    # WICHTIG: st.sidebar.button – sonst landet der Button im Hauptbereich.
+    if st.sidebar.button("🚪 Abmelden", use_container_width=True, type="secondary"):
         st.session_state.pop("auth_user", None)
         st.rerun()

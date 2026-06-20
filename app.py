@@ -38,6 +38,34 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
+def _sidebar_rest_days(days: int | None) -> None:
+    """Große, ampelfarbene Anzeige der Pausentage seit dem letzten Training."""
+    if days is None:
+        color, big, sub = "#888888", "–", "noch kein Training"
+    else:
+        # Gleiche Ampel wie im Dashboard: grün <=3, gelb <=5, sonst rot.
+        if days <= 3:
+            color = "#2ca02c"
+        elif days <= 5:
+            color = "#e0a800"
+        else:
+            color = "#d62728"
+        big = str(days)
+        if days == 0:
+            sub = "heute trainiert"
+        elif days == 1:
+            sub = "Pausentag"
+        else:
+            sub = "Pausentage"
+
+    st.sidebar.markdown(
+        "<div style='font-size:0.85rem;color:#666'>seit letztem Training</div>"
+        f"<div style='font-size:2.8rem;font-weight:800;color:{color};line-height:1.0'>{big}</div>"
+        f"<div style='font-size:0.95rem;font-weight:600;color:{color}'>{sub}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_sidebar(user: str) -> tuple[dt.date, str]:
     """Zeichnet die Sidebar und gibt (datum, seite) zurück."""
     st.sidebar.title("🏋️ Trainingstagebuch")
@@ -53,6 +81,15 @@ def render_sidebar(user: str) -> tuple[dt.date, str]:
 
     # Eingeloggter Nutzer + Logout (Identität kommt aus dem Login).
     st.sidebar.markdown(f"Angemeldet als **{user}**")
+
+    # Große, ampelfarbene Anzeige: Pausentage seit dem letzten Training.
+    try:
+        df_user = logic.documents_to_dataframe(db.fetch_trainings(user))
+        days = logic.days_since_last_training(df_user, dt.date.today())
+    except Exception:  # noqa: BLE001
+        days = None
+    _sidebar_rest_days(days)
+
     auth.logout_button()
 
     st.sidebar.divider()
