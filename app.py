@@ -20,6 +20,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+import auth
 import db
 import logic
 
@@ -36,8 +37,8 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
-def render_sidebar() -> tuple[str, dt.date, str]:
-    """Zeichnet die Sidebar und gibt (user, datum, seite) zurück."""
+def render_sidebar(user: str) -> tuple[dt.date, str]:
+    """Zeichnet die Sidebar und gibt (datum, seite) zurück."""
     st.sidebar.title("🏋️ Trainingstagebuch")
 
     # Verbindungsstatus aktiv prüfen, damit Fehler früh sichtbar sind.
@@ -49,14 +50,19 @@ def render_sidebar() -> tuple[str, dt.date, str]:
 
     st.sidebar.divider()
 
-    user = st.sidebar.selectbox("Nutzer", logic.USERS)
+    # Eingeloggter Nutzer + Logout (Identität kommt aus dem Login).
+    st.sidebar.markdown(f"Angemeldet als **{user}**")
+    auth.logout_button()
+
+    st.sidebar.divider()
+
     date = st.sidebar.date_input("Datum", value=dt.date.today())
 
     st.sidebar.divider()
     page = st.sidebar.radio("Bereich", ["Training eintragen", "Auswertung"])
 
     st.sidebar.caption("Beide Nutzer sehen alle Daten gemeinsam.")
-    return user, date, page
+    return date, page
 
 
 # ---------------------------------------------------------------------------
@@ -127,8 +133,18 @@ def render_input_page(user: str, date: dt.date) -> None:
 # ---------------------------------------------------------------------------
 # Seite 2: Dashboard / Auswertung
 # ---------------------------------------------------------------------------
-def render_dashboard(user: str) -> None:
-    st.header(f"Auswertung – {user}")
+def render_dashboard(default_user: str) -> None:
+    st.header("Auswertung")
+
+    # Gemeinsames Tagebuch: man kann die Auswertung jedes Nutzers ansehen.
+    # Default ist der eingeloggte Nutzer.
+    user = st.radio(
+        "Wessen Auswertung?",
+        logic.USERS,
+        index=logic.USERS.index(default_user),
+        horizontal=True,
+    )
+    st.subheader(f"Daten von {user}")
 
     try:
         documents = db.fetch_trainings(user)
@@ -256,7 +272,12 @@ def render_dashboard(user: str) -> None:
 # Hauptprogramm
 # ---------------------------------------------------------------------------
 def main() -> None:
-    user, date, page = render_sidebar()
+    # Login vorschalten – ohne gültigen Account geht es nicht weiter.
+    user = auth.require_login()
+    if not user:
+        st.stop()
+
+    date, page = render_sidebar(user)
 
     if page == "Training eintragen":
         render_input_page(user, date)
