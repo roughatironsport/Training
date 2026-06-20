@@ -503,6 +503,41 @@ def _combined_calendar_figure(cal: dict):
     fig.update_xaxes(side="top", fixedrange=True)
     # Neueste Woche oben: y[0] (ältester Eintrag) nach unten -> Achse umkehren.
     fig.update_yaxes(fixedrange=True, autorange="reversed")
+
+    x_labels = cal["x_labels"]
+    y_labels = cal["y_labels"]
+
+    # Trainings-Icons in die Zellen: 1 Hantel bei einem Nutzer, 2 bei beiden.
+    for r, row in enumerate(cal["z"]):
+        for c, code in enumerate(row):
+            if code in (1, 2):
+                icon = "🏋️"
+            elif code == 3:
+                icon = "🏋️🏋️"
+            else:
+                continue
+            fig.add_annotation(
+                x=x_labels[c], y=y_labels[r], text=icon,
+                showarrow=False, font=dict(size=12),
+            )
+
+    # Heutigen Tag immer markieren (Rahmen um die Zelle + Pin).
+    today_xy = cal.get("today_xy")
+    if today_xy is not None:
+        tx, ty = today_xy
+        c = x_labels.index(tx)
+        r = y_labels.index(ty)
+        fig.add_shape(
+            type="rect",
+            x0=c - 0.5, x1=c + 0.5, y0=r - 0.5, y1=r + 0.5,
+            line=dict(color="#111827", width=2.5),
+            fillcolor="rgba(0,0,0,0)",
+            xref="x", yref="y", layer="above",
+        )
+        fig.add_annotation(
+            x=tx, y=ty, text="heute", showarrow=False, yshift=-13,
+            font=dict(size=9, color="#111827"),
+        )
     return fig
 
 
@@ -784,7 +819,8 @@ def render_dashboard() -> None:
         )
         st.caption(
             "Eine Zeile = eine Woche. Zahl hinter dem Datum = Trainingstage der Woche, "
-            "🚀 ab 2. Blasse Felder rechts = Empfehlung fürs nächste Training (Hover für Details)."
+            "🚀 ab 2. 🏋️ = trainiert (🏋️🏋️ = beide). Schwarzer Rahmen = heute. "
+            "Blasse Felder = Empfehlung fürs nächste Training (Hover für Details)."
         )
         st.plotly_chart(_combined_calendar_figure(cal), use_container_width=True)
 

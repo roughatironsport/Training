@@ -485,14 +485,21 @@ def combined_calendar_matrix(
     end_sunday = end + pd.Timedelta(days=6 - end.weekday())
     all_days = pd.date_range(start_monday, end_sunday, freq="D")
 
+    today_ts = pd.Timestamp(today).normalize() if today is not None else None
+    x_labels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+
     z: list[list[int]] = []
     text: list[list[str]] = []
     y_labels: list[str] = []
+    today_xy = None  # (x_label, y_label) der heutigen Zelle, falls im Kalender
 
     for i in range(0, len(all_days), 7):
         week = all_days[i : i + 7]
         z_row, t_row = [], []
-        for day in week:
+        today_col = None
+        for c, day in enumerate(week):
+            if today_ts is not None and day == today_ts:
+                today_col = c
             in_a = day in set_a
             in_b = day in set_b
             code = 3 if (in_a and in_b) else (1 if in_a else (2 if in_b else 0))
@@ -533,14 +540,19 @@ def combined_calendar_matrix(
         # Ab 2 Trainingstagen (Wochenziel) eine Rakete dahinter.
         day_count = sum(1 for c in z_row if 1 <= c <= 3)
         rocket = " 🚀" if day_count >= 2 else ""
-        y_labels.append(f"{week[0].strftime('%d.%m.')} · {day_count}{rocket}")
+        y_label = f"{week[0].strftime('%d.%m.')} · {day_count}{rocket}"
+        y_labels.append(y_label)
+
+        if today_col is not None:
+            today_xy = (x_labels[today_col], y_label)
 
     return {
         "z": z,
         "y_labels": y_labels,
-        "x_labels": ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"],
+        "x_labels": x_labels,
         "text": text,
         "users": users,
+        "today_xy": today_xy,
     }
 
 
