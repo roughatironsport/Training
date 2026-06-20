@@ -68,6 +68,17 @@ def render_sidebar(user: str) -> tuple[dt.date, str]:
 # ---------------------------------------------------------------------------
 # Seite 1: Eingabemaske
 # ---------------------------------------------------------------------------
+def _adjust_value(key: str, delta: float, options: list) -> None:
+    """
+    Callback für die +/−-Buttons: ändert den Wert eines Dropdowns um `delta`
+    und rastet auf den nächstgelegenen erlaubten Wert ein (klemmt automatisch
+    an die Grenzen, da nur erlaubte Optionen gewählt werden).
+    """
+    current = st.session_state.get(key, options[0])
+    target = current + delta
+    st.session_state[key] = min(options, key=lambda o: abs(o - target))
+
+
 @st.dialog("📊 Dein Fortschritt")
 def _progress_dialog(comparisons: list[dict], user: str, date_str: str) -> None:
     """Modales Fenster: Veränderung ggü. dem letzten Trainingstag je Übung."""
@@ -135,40 +146,70 @@ def render_input_page(user: str, date: dt.date) -> None:
         history = []
     defaults = logic.input_defaults(history, user)
 
-    # Das gesamte Formular wird gesammelt abgeschickt (ein Rerun statt vieler).
-    with st.form("training_form", clear_on_submit=False):
-        exercise_inputs: dict[str, list[tuple[float, int]]] = {}
+    st.info(
+        "Schnell anpassen mit den Buttons (−2,5 / +2,5 kg bzw. −1 / +1 Wdh.) "
+        "oder direkt im Dropdown wählen.",
+        icon="💡",
+    )
 
-        for exercise in logic.EXERCISES:
-            st.subheader(exercise)
-            # Vier Spalten -> vier Sätze nebeneinander.
-            cols = st.columns(4)
-            sets: list[tuple[float, int]] = []
+    # Hinweis: KEIN st.form, damit die +/−-Buttons sofort wirken können.
+    exercise_inputs: dict[str, list[tuple[float, int]]] = {}
 
-            for i, (col, (set_type, label)) in enumerate(zip(cols, logic.SET_LAYOUT)):
-                # Vorbelegung aus dem letzten Trainingstag (sonst statische Defaults).
-                default_w, default_r = defaults[exercise][i]
-                with col:
-                    st.markdown(f"**{label}**")
-                    weight = st.selectbox(
-                        "Gewicht (kg)",
-                        logic.WEIGHT_OPTIONS,
-                        index=logic.WEIGHT_OPTIONS.index(default_w),
-                        format_func=lambda w: f"{w:g} kg",
-                        key=f"{exercise}_{label}_w",
-                    )
-                    reps = st.selectbox(
-                        "Wdh.",
-                        logic.REP_OPTIONS,
-                        index=logic.REP_OPTIONS.index(default_r),
-                        key=f"{exercise}_{label}_r",
-                    )
-                    sets.append((weight, reps))
+    for exercise in logic.EXERCISES:
+        st.subheader(exercise)
+        # Vier Spalten -> vier Sätze nebeneinander.
+        cols = st.columns(4)
+        sets: list[tuple[float, int]] = []
 
-            exercise_inputs[exercise] = sets
-            st.divider()
+        for i, (col, (set_type, label)) in enumerate(zip(cols, logic.SET_LAYOUT)):
+            # Vorbelegung aus dem letzten Trainingstag (sonst statische Defaults).
+            default_w, default_r = defaults[exercise][i]
+            w_key = f"{exercise}_{label}_w"
+            r_key = f"{exercise}_{label}_r"
+            with col:
+                st.markdown(f"**{label}**")
 
-        submitted = st.form_submit_button("💾 Speichern", type="primary")
+                # --- Gewicht: Dropdown + Schnell-Buttons ---
+                weight = st.selectbox(
+                    "Gewicht (kg)",
+                    logic.WEIGHT_OPTIONS,
+                    index=logic.WEIGHT_OPTIONS.index(default_w),
+                    format_func=lambda w: f"{w:g} kg",
+                    key=w_key,
+                )
+                bw_minus, bw_plus = st.columns(2)
+                bw_minus.button(
+                    "−2,5", key=f"{w_key}_minus", use_container_width=True,
+                    on_click=_adjust_value, args=(w_key, -2.5, logic.WEIGHT_OPTIONS),
+                )
+                bw_plus.button(
+                    "+2,5", key=f"{w_key}_plus", use_container_width=True,
+                    on_click=_adjust_value, args=(w_key, 2.5, logic.WEIGHT_OPTIONS),
+                )
+
+                # --- Wiederholungen: Dropdown + Schnell-Buttons ---
+                reps = st.selectbox(
+                    "Wdh.",
+                    logic.REP_OPTIONS,
+                    index=logic.REP_OPTIONS.index(default_r),
+                    key=r_key,
+                )
+                br_minus, br_plus = st.columns(2)
+                br_minus.button(
+                    "−1", key=f"{r_key}_minus", use_container_width=True,
+                    on_click=_adjust_value, args=(r_key, -1, logic.REP_OPTIONS),
+                )
+                br_plus.button(
+                    "+1", key=f"{r_key}_plus", use_container_width=True,
+                    on_click=_adjust_value, args=(r_key, 1, logic.REP_OPTIONS),
+                )
+
+                sets.append((weight, reps))
+
+        exercise_inputs[exercise] = sets
+        st.divider()
+
+    submitted = st.button("💾 Speichern", type="primary")
 
     if submitted:
         documents = logic.build_set_documents(user, date.isoformat(), exercise_inputs)
