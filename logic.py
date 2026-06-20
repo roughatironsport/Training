@@ -185,6 +185,63 @@ def volume_per_session(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def training_count(df: pd.DataFrame) -> int:
+    """Anzahl der Trainingseinheiten = Anzahl unterschiedlicher Trainingstage."""
+    if df.empty:
+        return 0
+    return int(df["date"].dt.normalize().nunique())
+
+
+def calendar_matrix(df: pd.DataFrame) -> dict | None:
+    """
+    Baut die Daten für eine kalenderartige Heatmap (GitHub-Stil, vertikal:
+    eine Zeile pro Kalenderwoche, sieben Spalten Mo–So).
+
+    Returns:
+        dict mit
+            z:        2D-Liste (0/1 – ob an dem Tag trainiert wurde)
+            y_labels: Wochen-Labels (Datum des Montags), chronologisch
+            x_labels: ["Mo", "Di", ... , "So"]
+            text:     2D-Liste mit Hover-Text je Tag
+        oder None, wenn keine Daten vorhanden sind.
+    """
+    if df.empty:
+        return None
+
+    trained_days = set(df["date"].dt.normalize())
+    start = min(trained_days)
+    end = max(trained_days)
+
+    # Auf volle Wochen ausrichten: Montag vor dem ersten, Sonntag nach dem letzten Tag.
+    start_monday = start - pd.Timedelta(days=start.weekday())
+    end_sunday = end + pd.Timedelta(days=6 - end.weekday())
+    all_days = pd.date_range(start_monday, end_sunday, freq="D")
+
+    z: list[list[int]] = []
+    text: list[list[str]] = []
+    y_labels: list[str] = []
+
+    # In 7er-Blöcke (Wochen) gruppieren.
+    for i in range(0, len(all_days), 7):
+        week = all_days[i : i + 7]
+        z_row, t_row = [], []
+        for day in week:
+            trained = day in trained_days
+            z_row.append(1 if trained else 0)
+            mark = " · ✓ trainiert" if trained else ""
+            t_row.append(f"{day.strftime('%a %d.%m.%Y')}{mark}")
+        z.append(z_row)
+        text.append(t_row)
+        y_labels.append(week[0].strftime("%d.%m."))
+
+    return {
+        "z": z,
+        "y_labels": y_labels,
+        "x_labels": ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"],
+        "text": text,
+    }
+
+
 def personal_records(df: pd.DataFrame) -> pd.DataFrame:
     """
     Persönliche Bestleistungen je Übung: höchstes Arbeitsgewicht und

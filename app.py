@@ -16,8 +16,8 @@ Die App teilt sich klar auf:
 
 import datetime as dt
 
-import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 import auth
@@ -133,18 +133,37 @@ def render_input_page(user: str, date: dt.date) -> None:
 # ---------------------------------------------------------------------------
 # Seite 2: Dashboard / Auswertung
 # ---------------------------------------------------------------------------
-def render_dashboard(default_user: str) -> None:
-    st.header("Auswertung")
-
-    # Gemeinsames Tagebuch: man kann die Auswertung jedes Nutzers ansehen.
-    # Default ist der eingeloggte Nutzer.
-    user = st.radio(
-        "Wessen Auswertung?",
-        logic.USERS,
-        index=logic.USERS.index(default_user),
-        horizontal=True,
+def _calendar_figure(cal: dict):
+    """Baut aus logic.calendar_matrix(...) eine kalenderartige Plotly-Heatmap."""
+    fig = go.Figure(
+        go.Heatmap(
+            z=cal["z"],
+            x=cal["x_labels"],
+            y=cal["y_labels"],
+            text=cal["text"],
+            hoverinfo="text",
+            xgap=3,
+            ygap=3,
+            zmin=0,
+            zmax=1,
+            colorscale=[[0, "#ebedf0"], [1, "#216e39"]],  # grau -> grün
+            showscale=False,
+        )
     )
-    st.subheader(f"Daten von {user}")
+    # Höhe an Anzahl Wochen koppeln, damit Zellen quadratisch wirken.
+    fig.update_layout(
+        height=max(160, 26 * len(cal["y_labels"]) + 50),
+        margin=dict(l=10, r=10, t=20, b=10),
+    )
+    fig.update_xaxes(side="top", fixedrange=True)
+    # Neueste Woche oben: y[0] (ältester Eintrag) nach unten -> Achse umkehren.
+    fig.update_yaxes(fixedrange=True, autorange="reversed")
+    return fig
+
+
+def render_user_panel(user: str) -> None:
+    """Rendert die komplette Auswertung EINES Nutzers (für eine Spalte)."""
+    st.subheader(user)
 
     try:
         documents = db.fetch_trainings(user)
@@ -155,37 +174,31 @@ def render_dashboard(default_user: str) -> None:
     df = logic.documents_to_dataframe(documents)
 
     if df.empty:
-        st.info(
-            f"Für **{user}** sind noch keine Trainings gespeichert. "
-            "Lege links unter „Training eintragen“ los."
-        )
+        st.info(f"Für **{user}** sind noch keine Trainings gespeichert.")
         return
 
-    # --- Kennzahlen / PRs ---------------------------------------------------
-    st.subheader("Persönliche Bestleistungen")
+    # --- Trainingshäufigkeit -----------------------------------------------
+    st.metric("Trainingseinheiten gesamt", logic.training_count(df))
+    cal = logic.calendar_matrix(df)
+    if cal:
+        st.caption("Trainingskalender (grün = trainiert)")
+        st.plotly_chart(_calendar_figure(cal), use_container_width=True)
+
+    # --- Persönliche Bestleistungen ----------------------------------------
     prs = logic.personal_records(df)
-    # Pro Übung eine Spalte mit Max-Gewicht + geschätztem 1RM.
-    cols = st.columns(len(logic.EXERCISES))
-    pr_lookup = prs.set_index("exercise")
-    for col, exercise in zip(cols, logic.EXERCISES):
-        with col:
-            if exercise in pr_lookup.index:
-                row = pr_lookup.loc[exercise]
-                st.metric(
-                    label=f"{exercise} – Max",
-                    value=f"{row['max_weight']:.1f} kg",
-                    help=f"Geschätztes 1RM (Epley): {row['best_1rm']:.1f} kg",
-                )
-                st.caption(f"≈ 1RM: {row['best_1rm']:.1f} kg")
-            else:
-                st.metric(label=f"{exercise} – Max", value="–")
+    if not prs.empty:
+        st.caption("Persönliche Bestleistungen")
+        pr_table = prs.rename(
+            columns={
+                "exercise": "Übung",
+                "max_weight": "Max (kg)",
+                "best_1rm": "≈ 1RM (kg)",
+            }
+        )
+        st.dataframe(pr_table, hide_index=True, use_container_width=True)
 
-    st.divider()
-
-    # --- Charts -------------------------------------------------------------
-    tab_weight, tab_1rm, tab_volume = st.tabs(
-        ["📈 Gewichtsentwicklung", "🔝 1RM-Verlauf (Epley)", "📊 Volumen pro Einheit"]
-    )
+    # --- Verlaufs-Charts in Tabs -------------------------------------------
+    tab_weight, tab_1rm, tab_volume = st.tabs(["📈 Gewicht", "🔝 1RM", "📊 Volumen"])
 
     with tab_weight:
         prog = logic.progression_per_exercise(df)
@@ -198,13 +211,9 @@ def render_dashboard(default_user: str) -> None:
                 y="max_weight",
                 color="exercise",
                 markers=True,
-                labels={
-                    "date": "Datum",
-                    "max_weight": "Max. Arbeitsgewicht (kg)",
-                    "exercise": "Übung",
-                },
-                title="Maximales Arbeitsgewicht über Zeit",
+                labels={"date": "Datum", "max_weight": "Max. Gewicht (kg)", "exercise": "Übung"},
             )
+            fig.update_layout(legend=dict(orientation="h", y=-0.3), margin=dict(t=10))
             st.plotly_chart(fig, use_container_width=True)
 
     with tab_1rm:
@@ -218,13 +227,9 @@ def render_dashboard(default_user: str) -> None:
                 y="best_1rm",
                 color="exercise",
                 markers=True,
-                labels={
-                    "date": "Datum",
-                    "best_1rm": "Geschätztes 1RM (kg)",
-                    "exercise": "Übung",
-                },
-                title="Geschätztes 1RM über Zeit (Epley)",
+                labels={"date": "Datum", "best_1rm": "≈ 1RM (kg)", "exercise": "Übung"},
             )
+            fig.update_layout(legend=dict(orientation="h", y=-0.3), margin=dict(t=10))
             st.plotly_chart(fig, use_container_width=True)
 
     with tab_volume:
@@ -237,35 +242,42 @@ def render_dashboard(default_user: str) -> None:
                 x="date",
                 y="volume",
                 labels={"date": "Datum", "volume": "Volumen (kg)"},
-                title="Gesamtvolumen pro Trainingseinheit (Gewicht × Wdh.)",
             )
+            fig.update_layout(margin=dict(t=10))
             st.plotly_chart(fig, use_container_width=True)
 
-    st.divider()
+    # --- Rohdaten (eingeklappt, damit die Spalte schlank bleibt) -----------
+    with st.expander("Alle Sätze anzeigen"):
+        table = df.copy()
+        table["date"] = table["date"].dt.date
+        table = table.rename(
+            columns={
+                "date": "Datum",
+                "exercise": "Übung",
+                "set_label": "Satz",
+                "weight": "Gewicht (kg)",
+                "reps": "Wdh.",
+                "volume": "Volumen",
+                "est_1rm": "≈ 1RM",
+            }
+        )
+        show_cols = ["Datum", "Übung", "Satz", "Gewicht (kg)", "Wdh.", "Volumen", "≈ 1RM"]
+        st.dataframe(
+            table[show_cols].sort_values(["Datum", "Übung"], ascending=[False, True]),
+            use_container_width=True,
+            hide_index=True,
+        )
 
-    # --- Rohdaten-Tabelle ---------------------------------------------------
-    st.subheader("Alle Sätze")
-    table = df.copy()
-    # Datum hübsch als reines Datum (ohne Uhrzeit) darstellen.
-    table["date"] = table["date"].dt.date
-    table = table.rename(
-        columns={
-            "date": "Datum",
-            "user": "Nutzer",
-            "exercise": "Übung",
-            "set_label": "Satz",
-            "weight": "Gewicht (kg)",
-            "reps": "Wdh.",
-            "volume": "Volumen",
-            "est_1rm": "≈ 1RM",
-        }
-    )
-    show_cols = ["Datum", "Übung", "Satz", "Gewicht (kg)", "Wdh.", "Volumen", "≈ 1RM"]
-    st.dataframe(
-        table[show_cols].sort_values(["Datum", "Übung"], ascending=[False, True]),
-        use_container_width=True,
-        hide_index=True,
-    )
+
+def render_dashboard() -> None:
+    st.header("Auswertung – beide Nutzer im Vergleich")
+
+    # Immer beide nebeneinander: links USERS[0] (Patric), rechts USERS[1] (Sandeep).
+    col_left, col_right = st.columns(2)
+    with col_left:
+        render_user_panel(logic.USERS[0])
+    with col_right:
+        render_user_panel(logic.USERS[1])
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +294,7 @@ def main() -> None:
     if page == "Training eintragen":
         render_input_page(user, date)
     else:
-        render_dashboard(user)
+        render_dashboard()
 
 
 if __name__ == "__main__":
