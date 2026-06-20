@@ -113,6 +113,103 @@ def build_set_documents(user: str, date_str: str, exercise_inputs: dict) -> list
     return documents
 
 
+def last_session_sets(documents: list[dict]) -> dict:
+    """
+    Die zuletzt gespeicherten Sätze je Übung (vom jeweils jüngsten
+    Trainingstag dieser Übung).
+
+    Returns:
+        {exercise: [ {"type","weight","reps"}, ... ]}
+    """
+    latest: dict[str, tuple[str, list]] = {}  # exercise -> (date_str, sets)
+    for doc in documents:
+        ex = doc.get("exercise")
+        date = doc.get("date", "")
+        # "YYYY-MM-DD" lässt sich lexikografisch vergleichen.
+        if ex not in latest or date > latest[ex][0]:
+            latest[ex] = (date, doc.get("sets", []))
+    return {ex: sets for ex, (_date, sets) in latest.items()}
+
+
+def input_defaults(documents: list[dict], user: str) -> dict:
+    """
+    Vorbelegung der Eingabemaske: {exercise: [(weight, reps), ...] (4 Sätze)}.
+
+    Nutzt die Sätze des letzten Trainingstags je Übung. Fehlt etwas, greifen
+    die statischen Defaults (WEIGHT_DEFAULTS bzw. 8/5 Wdh.).
+    """
+    last_sets = last_session_sets(documents)
+    result: dict[str, list[tuple[float, int]]] = {}
+
+    for exercise in EXERCISES:
+        prev = last_sets.get(exercise, [])
+        sets: list[tuple[float, int]] = []
+        for i, (set_type, _label) in enumerate(SET_LAYOUT):
+            if i < len(prev):
+                weight = _snap_to_option(float(prev[i].get("weight", 0)))
+                reps = int(prev[i].get("reps", 0))
+                # Sicherheitshalber in den erlaubten Bereich klemmen.
+                reps = min(REP_OPTIONS[-1], max(REP_OPTIONS[0], reps))
+            else:
+                weight = default_weight(user, exercise, set_type)
+                reps = 8 if set_type == "warmup" else 5
+            sets.append((weight, reps))
+        result[exercise] = sets
+    return result
+
+
+def session_metrics_from_sets(sets: list[dict]) -> dict | None:
+    """
+    Kennzahlen einer Übungseinheit aus ihren Sätzen (nur Arbeitssätze):
+    max_weight, volume (Σ Gewicht×Wdh.), best_1rm. None, wenn keine Arbeitssätze.
+    """
+    work = [s for s in sets if s.get("type") == "work"]
+    if not work:
+        return None
+    weights = [float(s.get("weight", 0)) for s in work]
+    volume = sum(float(s.get("weight", 0)) * int(s.get("reps", 0)) for s in work)
+    best_1rm = max(
+        estimate_1rm(float(s.get("weight", 0)), int(s.get("reps", 0))) for s in work
+    )
+    return {"max_weight": max(weights), "volume": volume, "best_1rm": best_1rm}
+
+
+def build_comparisons(new_docs: list[dict], history_docs: list[dict], new_date: str) -> list[dict]:
+    """
+    Vergleicht die gerade gespeicherten Übungen mit dem jeweils letzten
+    früheren Trainingstag derselben Übung.
+
+    Returns:
+        Liste von dicts: {exercise, new, prev, prev_date}
+        (new/prev sind Kennzahl-dicts oder None).
+    """
+    out = []
+    for doc in new_docs:
+        ex = doc["exercise"]
+        new_metrics = session_metrics_from_sets(doc.get("sets", []))
+
+        earlier = [
+            d for d in history_docs
+            if d.get("exercise") == ex and d.get("date", "") < new_date
+        ]
+        if earlier:
+            last = max(earlier, key=lambda d: d["date"])
+            prev_metrics = session_metrics_from_sets(last.get("sets", []))
+            prev_date = last["date"]
+        else:
+            prev_metrics, prev_date = None, None
+
+        out.append(
+            {
+                "exercise": ex,
+                "new": new_metrics,
+                "prev": prev_metrics,
+                "prev_date": prev_date,
+            }
+        )
+    return out
+
+
 def documents_to_dataframe(documents: list[dict]) -> pd.DataFrame:
     """
     Flacht die verschachtelten Dokumente in ein "langes" DataFrame ab –

@@ -68,12 +68,72 @@ def render_sidebar(user: str) -> tuple[dt.date, str]:
 # ---------------------------------------------------------------------------
 # Seite 1: Eingabemaske
 # ---------------------------------------------------------------------------
+@st.dialog("📊 Dein Fortschritt")
+def _progress_dialog(comparisons: list[dict], user: str, date_str: str) -> None:
+    """Modales Fenster: Veränderung ggü. dem letzten Trainingstag je Übung."""
+    st.caption(f"{user} · {date_str}")
+
+    for comp in comparisons:
+        new = comp["new"]
+        prev = comp["prev"]
+        st.markdown(f"#### {comp['exercise']}")
+
+        if new is None:
+            st.info("Nur Aufwärmsatz eingetragen – keine Arbeitssätze zum Auswerten.")
+            continue
+        if prev is None:
+            st.success(
+                "Erstes Mal mit Arbeitssätzen – Startwerte gesetzt! 💪  "
+                f"Max {new['max_weight']:.1f} kg · Volumen {new['volume']:.0f} kg · "
+                f"≈1RM {new['best_1rm']:.1f} kg"
+            )
+            continue
+
+        st.caption(f"Vergleich mit {comp['prev_date']}")
+        c1, c2, c3 = st.columns(3)
+        c1.metric(
+            "Max-Gewicht", f"{new['max_weight']:.1f} kg",
+            delta=f"{new['max_weight'] - prev['max_weight']:+.1f} kg",
+        )
+        c2.metric(
+            "Volumen", f"{new['volume']:.0f} kg",
+            delta=f"{new['volume'] - prev['volume']:+.0f} kg",
+        )
+        c3.metric(
+            "≈ 1RM", f"{new['best_1rm']:.1f} kg",
+            delta=f"{new['best_1rm'] - prev['best_1rm']:+.1f} kg",
+        )
+
+    # Gesamtfazit über alle vergleichbaren Übungen (Volumen).
+    comparable = [c for c in comparisons if c["new"] and c["prev"]]
+    if comparable:
+        total_delta = sum(c["new"]["volume"] - c["prev"]["volume"] for c in comparable)
+        st.divider()
+        if total_delta > 0:
+            st.success(f"Gesamtvolumen **+{total_delta:.0f} kg** gegenüber letztem Mal – stark! 🚀")
+        elif total_delta < 0:
+            st.warning(f"Gesamtvolumen **{total_delta:.0f} kg** – Deload oder leichter Tag? Dranbleiben! 💪")
+        else:
+            st.info("Gleiches Gesamtvolumen wie letztes Mal – konstant! 👊")
+
+    if st.button("Schließen", type="primary"):
+        st.rerun()
+
+
 def render_input_page(user: str, date: dt.date) -> None:
     st.header("Training eintragen")
     st.caption(
         f"Nutzer: **{user}**  ·  Datum: **{date.isoformat()}**  ·  "
         "Pro Übung 1 Aufwärmsatz + 3 Arbeitssätze."
     )
+
+    # Historie des Nutzers laden -> Felder mit den letzten Werten vorbelegen.
+    try:
+        history = db.fetch_trainings(user)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Historie konnte nicht geladen werden: {exc}")
+        history = []
+    defaults = logic.input_defaults(history, user)
 
     # Das gesamte Formular wird gesammelt abgeschickt (ein Rerun statt vieler).
     with st.form("training_form", clear_on_submit=False):
@@ -85,12 +145,11 @@ def render_input_page(user: str, date: dt.date) -> None:
             cols = st.columns(4)
             sets: list[tuple[float, int]] = []
 
-            for col, (set_type, label) in zip(cols, logic.SET_LAYOUT):
+            for i, (col, (set_type, label)) in enumerate(zip(cols, logic.SET_LAYOUT)):
+                # Vorbelegung aus dem letzten Trainingstag (sonst statische Defaults).
+                default_w, default_r = defaults[exercise][i]
                 with col:
                     st.markdown(f"**{label}**")
-                    # Gewicht als Dropdown in 2,5-kg-Schritten, vorbelegt je
-                    # Nutzer/Übung/Satztyp (siehe logic.WEIGHT_DEFAULTS).
-                    default_w = logic.default_weight(user, exercise, set_type)
                     weight = st.selectbox(
                         "Gewicht (kg)",
                         logic.WEIGHT_OPTIONS,
@@ -98,13 +157,10 @@ def render_input_page(user: str, date: dt.date) -> None:
                         format_func=lambda w: f"{w:g} kg",
                         key=f"{exercise}_{label}_w",
                     )
-                    # Wiederholungen als Dropdown 0–15.
-                    # Aufwärmsatz typ. mehr Reps, Arbeitssätze ~5 als Default.
-                    default_reps = 8 if set_type == "warmup" else 5
                     reps = st.selectbox(
                         "Wdh.",
                         logic.REP_OPTIONS,
-                        index=logic.REP_OPTIONS.index(default_reps),
+                        index=logic.REP_OPTIONS.index(default_r),
                         key=f"{exercise}_{label}_r",
                     )
                     sets.append((weight, reps))
@@ -122,6 +178,10 @@ def render_input_page(user: str, date: dt.date) -> None:
                 "Trage mindestens eine Übung mit Gewicht ein."
             )
             return
+
+        # Vergleich gegen die Historie VOR dem Einfügen berechnen.
+        comparisons = logic.build_comparisons(documents, history, date.isoformat())
+
         try:
             count = db.insert_training(documents)
         except Exception as exc:  # noqa: BLE001 – User soll Fehler sehen
@@ -132,7 +192,8 @@ def render_input_page(user: str, date: dt.date) -> None:
             f"Gespeichert: {count} Übung(en) für {user} am {date.isoformat()}.",
             icon="✅",
         )
-        st.balloons()
+        # Fortschritts-Fenster öffnen.
+        _progress_dialog(comparisons, user, date.isoformat())
 
 
 # ---------------------------------------------------------------------------
