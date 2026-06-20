@@ -131,6 +131,27 @@ def last_session_sets(documents: list[dict]) -> dict:
     return {ex: sets for ex, (_date, sets) in latest.items()}
 
 
+def last_session_dates(documents: list[dict]) -> dict:
+    """Datum des letzten Trainingstags je Übung: {exercise: 'YYYY-MM-DD'}."""
+    latest: dict[str, str] = {}
+    for doc in documents:
+        ex = doc.get("exercise")
+        date = doc.get("date", "")
+        if ex not in latest or date > latest[ex]:
+            latest[ex] = date
+    return latest
+
+
+def all_dates(documents: list[dict]) -> list[str]:
+    """Alle vorhandenen Trainingstage (Strings), neueste zuerst."""
+    return sorted({doc.get("date", "") for doc in documents}, reverse=True)
+
+
+def docs_on_date(documents: list[dict], date: str) -> list[dict]:
+    """Alle Übungs-Dokumente eines bestimmten Tages."""
+    return [doc for doc in documents if doc.get("date") == date]
+
+
 def input_defaults(documents: list[dict], user: str) -> dict:
     """
     Vorbelegung der Eingabemaske: {exercise: [(weight, reps), ...] (4 Sätze)}.

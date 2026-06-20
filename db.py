@@ -139,3 +139,31 @@ def fetch_trainings(user: str | None = None) -> list[dict]:
     query = {"user": user} if user else {}
     cursor = get_collection().find(query, {"_id": 0}).sort("date", 1)
     return list(cursor)
+
+
+def update_exercise(user: str, date: str, exercise: str, sets: list[dict]) -> int:
+    """
+    Aktualisiert die Sätze einer Übung an einem bestimmten Tag.
+
+    Identität eines Eintrags = (user, date, exercise). Gibt die Anzahl der
+    geänderten Dokumente zurück.
+    """
+    result = get_collection().update_one(
+        {"user": user, "date": date, "exercise": exercise},
+        {"$set": {"sets": sets}},
+    )
+    return result.modified_count
+
+
+def delete_exercise(user: str, date: str, exercise: str) -> int:
+    """Löscht eine einzelne Übung an einem Tag. Returns: Anzahl gelöscht."""
+    result = get_collection().delete_many(
+        {"user": user, "date": date, "exercise": exercise}
+    )
+    return result.deleted_count
+
+
+def delete_training_day(user: str, date: str) -> int:
+    """Löscht ALLE Übungen eines Nutzers an einem Tag. Returns: Anzahl gelöscht."""
+    result = get_collection().delete_many({"user": user, "date": date})
+    return result.deleted_count

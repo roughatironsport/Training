@@ -59,7 +59,9 @@ def render_sidebar(user: str) -> tuple[dt.date, str]:
     date = st.sidebar.date_input("Datum", value=dt.date.today())
 
     st.sidebar.divider()
-    page = st.sidebar.radio("Bereich", ["Training eintragen", "Auswertung"])
+    page = st.sidebar.radio(
+        "Bereich", ["Training eintragen", "Auswertung", "Bearbeiten & Löschen"]
+    )
 
     st.sidebar.caption("Beide Nutzer sehen alle Daten gemeinsam.")
     return date, page
@@ -77,6 +79,13 @@ def _adjust_value(key: str, delta: float, options: list) -> None:
     current = st.session_state.get(key, options[0])
     target = current + delta
     st.session_state[key] = min(options, key=lambda o: abs(o - target))
+
+
+def _delta_str(new_v: float, prev_v: float, unit: str, decimals: int) -> str:
+    """Delta als absoluter Wert + Prozent, z. B. '+5.0 kg (+5.0%)'."""
+    diff = new_v - prev_v
+    pct = (diff / prev_v * 100) if prev_v else 0.0
+    return f"{diff:+.{decimals}f} {unit} ({pct:+.1f}%)"
 
 
 @st.dialog("📊 Dein Fortschritt")
@@ -104,15 +113,15 @@ def _progress_dialog(comparisons: list[dict], user: str, date_str: str) -> None:
         c1, c2, c3 = st.columns(3)
         c1.metric(
             "Max-Gewicht", f"{new['max_weight']:.1f} kg",
-            delta=f"{new['max_weight'] - prev['max_weight']:+.1f} kg",
+            delta=_delta_str(new["max_weight"], prev["max_weight"], "kg", 1),
         )
         c2.metric(
             "Volumen", f"{new['volume']:.0f} kg",
-            delta=f"{new['volume'] - prev['volume']:+.0f} kg",
+            delta=_delta_str(new["volume"], prev["volume"], "kg", 0),
         )
         c3.metric(
             "≈ 1RM", f"{new['best_1rm']:.1f} kg",
-            delta=f"{new['best_1rm'] - prev['best_1rm']:+.1f} kg",
+            delta=_delta_str(new["best_1rm"], prev["best_1rm"], "kg", 1),
         )
 
     # Gesamtfazit über alle vergleichbaren Übungen (Volumen).
@@ -145,18 +154,18 @@ def render_input_page(user: str, date: dt.date) -> None:
         st.error(f"Historie konnte nicht geladen werden: {exc}")
         history = []
     defaults = logic.input_defaults(history, user)
-
-    st.info(
-        "Schnell anpassen mit den Buttons (−2,5 / +2,5 kg bzw. −1 / +1 Wdh.) "
-        "oder direkt im Dropdown wählen.",
-        icon="💡",
-    )
+    last_dates = logic.last_session_dates(history)
 
     # Hinweis: KEIN st.form, damit die +/−-Buttons sofort wirken können.
     exercise_inputs: dict[str, list[tuple[float, int]]] = {}
 
     for exercise in logic.EXERCISES:
         st.subheader(exercise)
+        # Punkt 4: Hinweis, was beim letzten Mal trainiert wurde.
+        if exercise in last_dates:
+            st.caption(f"📅 Vorbelegt mit den Werten vom letzten Training: **{last_dates[exercise]}**")
+        else:
+            st.caption("📅 Noch kein vorheriges Training – Startwerte vorbelegt.")
         # Vier Spalten -> vier Sätze nebeneinander.
         cols = st.columns(4)
         sets: list[tuple[float, int]] = []
@@ -300,7 +309,8 @@ def render_user_panel(user: str, df) -> None:
                 "best_1rm": "≈ 1RM (kg)",
             }
         )
-        st.dataframe(pr_table, hide_index=True, use_container_width=True)
+        # st.table (server-seitig) statt st.dataframe -> kein dynamisches JS-Modul.
+        st.table(pr_table.set_index("Übung"))
 
     # --- Verlaufs-Charts in Tabs -------------------------------------------
     tab_weight, tab_1rm, tab_volume = st.tabs(["📈 Gewicht", "🔝 1RM", "📊 Volumen"])
@@ -367,11 +377,11 @@ def render_user_panel(user: str, df) -> None:
             }
         )
         show_cols = ["Datum", "Übung", "Satz", "Gewicht (kg)", "Wdh.", "Volumen", "≈ 1RM"]
-        st.dataframe(
-            table[show_cols].sort_values(["Datum", "Übung"], ascending=[False, True]),
-            use_container_width=True,
-            hide_index=True,
+        sorted_table = table[show_cols].sort_values(
+            ["Datum", "Übung"], ascending=[False, True]
         )
+        # st.table statt st.dataframe -> umgeht das fehlschlagende JS-Modul.
+        st.table(sorted_table.set_index(["Datum", "Übung", "Satz"]))
 
 
 def _last_training_banner(user: str, df, today: dt.date) -> None:
@@ -478,6 +488,93 @@ def render_dashboard() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Seite 3: Bearbeiten & Löschen
+# ---------------------------------------------------------------------------
+def render_manage_page(user: str) -> None:
+    st.header("Bearbeiten & Löschen")
+    st.caption(f"Eigene Einträge von **{user}** korrigieren oder entfernen.")
+
+    try:
+        documents = db.fetch_trainings(user)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Daten konnten nicht geladen werden: {exc}")
+        return
+
+    dates = logic.all_dates(documents)
+    if not dates:
+        st.info(f"Für **{user}** sind noch keine Trainings gespeichert.")
+        return
+
+    date = st.selectbox("Trainingstag wählen", dates)
+
+    # --- Ganzen Trainingstag löschen ---------------------------------------
+    with st.expander("⚠️ Ganzen Trainingstag löschen"):
+        st.warning(f"Löscht ALLE Übungen von {user} am {date}.")
+        confirm_day = st.checkbox("Ja, wirklich löschen", key=f"confirm_day_{date}")
+        if st.button("🗑 Trainingstag löschen", disabled=not confirm_day, key=f"del_day_{date}"):
+            n = db.delete_training_day(user, date)
+            st.success(f"{n} Eintrag/Einträge vom {date} gelöscht.")
+            st.rerun()
+
+    st.divider()
+
+    # --- Einzelne Übungen des Tages bearbeiten / löschen -------------------
+    for doc in logic.docs_on_date(documents, date):
+        exercise = doc["exercise"]
+        stored = doc.get("sets", [])
+        st.subheader(exercise)
+
+        cols = st.columns(4)
+        edited_sets: list[dict] = []
+        for i, (col, (set_type, label)) in enumerate(zip(cols, logic.SET_LAYOUT)):
+            if i < len(stored):
+                w_def = logic._snap_to_option(float(stored[i].get("weight", 0)))
+                r_def = min(15, max(0, int(stored[i].get("reps", 0))))
+                stype = stored[i].get("type", set_type)
+            else:
+                w_def, r_def, stype = 0.0, 0, set_type
+
+            w_key = f"edit_{date}_{exercise}_{label}_w"
+            r_key = f"edit_{date}_{exercise}_{label}_r"
+            with col:
+                st.markdown(f"**{label}**")
+                w = st.selectbox(
+                    "Gewicht (kg)", logic.WEIGHT_OPTIONS,
+                    index=logic.WEIGHT_OPTIONS.index(w_def),
+                    format_func=lambda x: f"{x:g} kg", key=w_key,
+                )
+                bm, bp = st.columns(2)
+                bm.button("−2,5", key=f"{w_key}_m", use_container_width=True,
+                          on_click=_adjust_value, args=(w_key, -2.5, logic.WEIGHT_OPTIONS))
+                bp.button("+2,5", key=f"{w_key}_p", use_container_width=True,
+                          on_click=_adjust_value, args=(w_key, 2.5, logic.WEIGHT_OPTIONS))
+                r = st.selectbox(
+                    "Wdh.", logic.REP_OPTIONS,
+                    index=logic.REP_OPTIONS.index(r_def), key=r_key,
+                )
+                rm, rp = st.columns(2)
+                rm.button("−1", key=f"{r_key}_m", use_container_width=True,
+                          on_click=_adjust_value, args=(r_key, -1, logic.REP_OPTIONS))
+                rp.button("+1", key=f"{r_key}_p", use_container_width=True,
+                          on_click=_adjust_value, args=(r_key, 1, logic.REP_OPTIONS))
+            edited_sets.append({"type": stype, "weight": float(w), "reps": int(r)})
+
+        action_l, action_r = st.columns(2)
+        if action_l.button("💾 Aktualisieren", key=f"upd_{date}_{exercise}", type="primary"):
+            db.update_exercise(user, date, exercise, edited_sets)
+            st.success(f"{exercise} am {date} aktualisiert.")
+            st.rerun()
+        with action_r:
+            confirm_ex = st.checkbox("Löschen bestätigen", key=f"confirm_ex_{date}_{exercise}")
+            if st.button("🗑 Übung löschen", key=f"del_ex_{date}_{exercise}", disabled=not confirm_ex):
+                db.delete_exercise(user, date, exercise)
+                st.success(f"{exercise} am {date} gelöscht.")
+                st.rerun()
+
+        st.divider()
+
+
+# ---------------------------------------------------------------------------
 # Hauptprogramm
 # ---------------------------------------------------------------------------
 def main() -> None:
@@ -490,8 +587,10 @@ def main() -> None:
 
     if page == "Training eintragen":
         render_input_page(user, date)
-    else:
+    elif page == "Auswertung":
         render_dashboard()
+    else:
+        render_manage_page(user)
 
 
 if __name__ == "__main__":
