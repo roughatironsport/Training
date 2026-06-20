@@ -650,9 +650,30 @@ def _last_training_banner(user: str, df, today: dt.date) -> None:
         else:
             text = f"vor {days} Tagen"
 
+    # Volumen-Veränderung des letzten Trainings ggü. dem vorherigen.
+    vol = logic.volume_per_session(df)
+    vol_line = ""
+    if len(vol) >= 2:
+        vals = list(vol.sort_values("date")["volume"])
+        prev, latest = vals[-2], vals[-1]
+        pct = (latest - prev) / prev * 100 if prev else 0.0
+        if pct > 0:
+            vcolor, arrow = "#2ca02c", "▲"
+        elif pct < 0:
+            vcolor, arrow = "#d62728", "▼"
+        else:
+            vcolor, arrow = "#888888", "="
+        vol_line = (
+            f"<div style='font-size:1.0rem;font-weight:600;color:{vcolor}'>"
+            f"{arrow} {pct:+.1f}% Volumen ggü. vorherigem Training</div>"
+        )
+    elif len(vol) == 1:
+        vol_line = "<div style='font-size:0.9rem;color:#999'>erstes Training – kein Vergleich</div>"
+
     st.markdown(
         f"<div style='font-size:1.0rem;color:#666'>{user} – letztes Training</div>"
-        f"<div style='font-size:2.3rem;font-weight:800;color:{color};line-height:1.1'>{text}</div>",
+        f"<div style='font-size:2.3rem;font-weight:800;color:{color};line-height:1.1'>{text}</div>"
+        f"{vol_line}",
         unsafe_allow_html=True,
     )
 
