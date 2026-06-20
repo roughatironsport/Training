@@ -121,6 +121,21 @@ def _fmt_num(x: float) -> str:
     return f"{int(rounded)}" if rounded == int(rounded) else f"{rounded:.1f}"
 
 
+def _change_badge(current: float, previous) -> str:
+    """
+    Kleines farbiges Badge: grün ▲ wenn größer als letztes Mal, rot ▼ wenn
+    kleiner, grau wenn gleich. Leerer String, wenn kein Vergleich möglich.
+    """
+    if previous is None:
+        return "<span style='color:#bbb;font-size:0.8rem'>—</span>"
+    diff = current - previous
+    if diff > 0:
+        return f"<span style='color:#2ca02c;font-weight:700;font-size:0.85rem'>▲ {diff:+g}</span>"
+    if diff < 0:
+        return f"<span style='color:#d62728;font-weight:700;font-size:0.85rem'>▼ {diff:+g}</span>"
+    return "<span style='color:#999;font-size:0.8rem'>= gleich</span>"
+
+
 def _pct_delta_str(values: list) -> str | None:
     """
     Prozentuale Änderung vom vorletzten zum letzten Wert (None bei < 2 Werten).
@@ -229,6 +244,17 @@ def render_input_page(user: str) -> None:
         history = []
     defaults = logic.input_defaults(history, user)
     last_dates = logic.last_session_dates(history)
+    last_sets = logic.last_session_sets(history)  # für Veränderungs-Badges
+
+    # Punkt 4: Schon ein Training an diesem Tag? Dann Speichern sperren.
+    existing_dates = {doc.get("date") for doc in history}
+    already_logged = date.isoformat() in existing_dates
+    if already_logged:
+        st.warning(
+            f"Für **{date.isoformat()}** existiert bereits ein Training. "
+            "Änderungen bitte unter **Bearbeiten & Löschen** vornehmen.",
+            icon="🔒",
+        )
 
     # Hinweis: KEIN st.form, damit die +/−-Buttons sofort wirken können.
     exercise_inputs: dict[str, list[tuple[float, int]]] = {}
@@ -249,10 +275,16 @@ def render_input_page(user: str) -> None:
             default_w, default_r = defaults[exercise][i]
             w_key = f"{exercise}_{label}_w"
             r_key = f"{exercise}_{label}_r"
+
+            # Werte des letzten Trainings für den Vergleich (Badges).
+            prev_set = last_sets.get(exercise, [])
+            prev_w = float(prev_set[i]["weight"]) if i < len(prev_set) else None
+            prev_r = int(prev_set[i]["reps"]) if i < len(prev_set) else None
+
             with col:
                 st.markdown(f"**{label}**")
 
-                # --- Gewicht: Dropdown + Schnell-Buttons ---
+                # --- Gewicht: Dropdown + Schnell-Buttons + Veränderungs-Badge ---
                 weight = st.selectbox(
                     "Gewicht (kg)",
                     logic.WEIGHT_OPTIONS,
@@ -269,8 +301,9 @@ def render_input_page(user: str) -> None:
                     "+2,5", key=f"{w_key}_plus", use_container_width=True,
                     on_click=_adjust_value, args=(w_key, 2.5, logic.WEIGHT_OPTIONS),
                 )
+                st.markdown(_change_badge(weight, prev_w), unsafe_allow_html=True)
 
-                # --- Wiederholungen: Dropdown + Schnell-Buttons ---
+                # --- Wiederholungen: Dropdown + Schnell-Buttons + Badge ---
                 reps = st.selectbox(
                     "Wdh.",
                     logic.REP_OPTIONS,
@@ -286,13 +319,14 @@ def render_input_page(user: str) -> None:
                     "+1", key=f"{r_key}_plus", use_container_width=True,
                     on_click=_adjust_value, args=(r_key, 1, logic.REP_OPTIONS),
                 )
+                st.markdown(_change_badge(reps, prev_r), unsafe_allow_html=True)
 
                 sets.append((weight, reps))
 
         exercise_inputs[exercise] = sets
         st.divider()
 
-    submitted = st.button("💾 Speichern", type="primary")
+    submitted = st.button("💾 Speichern", type="primary", disabled=already_logged)
 
     if submitted:
         documents = logic.build_set_documents(user, date.isoformat(), exercise_inputs)
@@ -357,6 +391,14 @@ def _combined_calendar_figure(cal: dict):
     fig.update_layout(
         height=max(180, 26 * len(cal["y_labels"]) + 50),
         margin=dict(l=10, r=10, t=20, b=10),
+        # Punkt 2: breiteres, schöneres Tooltip.
+        hoverlabel=dict(
+            bgcolor="white",
+            bordercolor="#cccccc",
+            font=dict(size=13, color="#222222"),
+            align="left",
+            namelength=-1,
+        ),
     )
     fig.update_xaxes(side="top", fixedrange=True)
     # Neueste Woche oben: y[0] (ältester Eintrag) nach unten -> Achse umkehren.
@@ -404,61 +446,49 @@ def render_user_panel(user: str, df) -> None:
         # st.table (server-seitig) statt st.dataframe -> kein dynamisches JS-Modul.
         st.table(pr_display.set_index("Übung"))
 
-    # --- Verlaufs-Charts in Tabs -------------------------------------------
-    tab_weight, tab_1rm, tab_volume = st.tabs(["📈 Gewicht", "🔝 1RM", "📊 Volumen"])
+    # --- Verlaufs-Charts untereinander (keine Tabs mehr) -------------------
+    st.markdown("##### 📈 Gewicht")
+    prog = logic.progression_per_exercise(df)
+    if prog.empty:
+        st.info("Keine Arbeitssätze vorhanden.")
+    else:
+        _render_change_metrics(prog, "max_weight")
+        fig = px.line(
+            prog, x="date", y="max_weight", color="exercise", markers=True,
+            labels={"date": "Datum", "max_weight": "Max. Gewicht (kg)", "exercise": "Übung"},
+        )
+        fig.update_layout(legend=dict(orientation="h", y=-0.3), margin=dict(t=10))
+        st.plotly_chart(fig, use_container_width=True)
 
-    with tab_weight:
-        prog = logic.progression_per_exercise(df)
-        if prog.empty:
-            st.info("Keine Arbeitssätze vorhanden.")
-        else:
-            _render_change_metrics(prog, "max_weight")
-            fig = px.line(
-                prog,
-                x="date",
-                y="max_weight",
-                color="exercise",
-                markers=True,
-                labels={"date": "Datum", "max_weight": "Max. Gewicht (kg)", "exercise": "Übung"},
-            )
-            fig.update_layout(legend=dict(orientation="h", y=-0.3), margin=dict(t=10))
-            st.plotly_chart(fig, use_container_width=True)
+    st.markdown("##### 🔝 1RM (geschätzt)")
+    rm = logic.best_1rm_per_exercise(df)
+    if rm.empty:
+        st.info("Keine Arbeitssätze vorhanden.")
+    else:
+        _render_change_metrics(rm, "best_1rm")
+        fig = px.line(
+            rm, x="date", y="best_1rm", color="exercise", markers=True,
+            labels={"date": "Datum", "best_1rm": "≈ 1RM (kg)", "exercise": "Übung"},
+        )
+        fig.update_layout(legend=dict(orientation="h", y=-0.3), margin=dict(t=10))
+        st.plotly_chart(fig, use_container_width=True)
 
-    with tab_1rm:
-        rm = logic.best_1rm_per_exercise(df)
-        if rm.empty:
-            st.info("Keine Arbeitssätze vorhanden.")
-        else:
-            _render_change_metrics(rm, "best_1rm")
-            fig = px.line(
-                rm,
-                x="date",
-                y="best_1rm",
-                color="exercise",
-                markers=True,
-                labels={"date": "Datum", "best_1rm": "≈ 1RM (kg)", "exercise": "Übung"},
-            )
-            fig.update_layout(legend=dict(orientation="h", y=-0.3), margin=dict(t=10))
-            st.plotly_chart(fig, use_container_width=True)
+    st.markdown("##### 📊 Volumen")
+    vol = logic.volume_per_session(df)
+    if vol.empty:
+        st.info("Keine Arbeitssätze vorhanden.")
+    else:
+        st.caption("Veränderung zur vorigen Einheit")
+        vals = list(vol.sort_values("date")["volume"])
+        st.metric("Volumen letzte Einheit", f"{_fmt_num(vals[-1])} kg", delta=_pct_delta_str(vals))
+        fig = px.bar(
+            vol, x="date", y="volume",
+            labels={"date": "Datum", "volume": "Volumen (kg)"},
+        )
+        fig.update_layout(margin=dict(t=10))
+        st.plotly_chart(fig, use_container_width=True)
 
-    with tab_volume:
-        vol = logic.volume_per_session(df)
-        if vol.empty:
-            st.info("Keine Arbeitssätze vorhanden.")
-        else:
-            st.caption("Veränderung zur vorigen Einheit")
-            vals = list(vol.sort_values("date")["volume"])
-            st.metric("Volumen letzte Einheit", f"{_fmt_num(vals[-1])} kg", delta=_pct_delta_str(vals))
-            fig = px.bar(
-                vol,
-                x="date",
-                y="volume",
-                labels={"date": "Datum", "volume": "Volumen (kg)"},
-            )
-            fig.update_layout(margin=dict(t=10))
-            st.plotly_chart(fig, use_container_width=True)
-
-    # --- Rohdaten je Datum (eingeklappt) -----------------------------------
+    # --- Rohdaten je Datum, in Blöcken pro Übung (eingeklappt) -------------
     with st.expander("Alle Sätze anzeigen"):
         dates = sorted(df["date"].dt.date.unique(), reverse=True)
         sel_date = st.selectbox(
@@ -468,18 +498,31 @@ def render_user_panel(user: str, df) -> None:
             key=f"alle_saetze_{user}",
         )
         day_df = df[df["date"].dt.date == sel_date]
-        # Zahlen ohne überflüssige Nachkommastellen (0,5-Rundung).
-        display = pd.DataFrame(
-            {
-                "Übung": day_df["exercise"].values,
-                "Satz": day_df["set_label"].values,
-                "Gewicht (kg)": [_fmt_num(x) for x in day_df["weight"]],
-                "Wdh.": day_df["reps"].astype(int).values,
-                "Volumen": [_fmt_num(x) for x in day_df["volume"]],
-                "≈ 1RM": [_fmt_num(x) for x in day_df["est_1rm"]],
-            }
-        )
-        st.table(display.set_index(["Übung", "Satz"]))
+
+        # Pro Übung ein Block; Übungen in fester Reihenfolge, Sätze sortiert.
+        for exercise in logic.EXERCISES:
+            ex_df = day_df[day_df["exercise"] == exercise]
+            if ex_df.empty:
+                continue
+            # Sätze in definierter Reihenfolge (Aufwärmsatz, Arbeitssatz 1..3).
+            ex_df = ex_df.copy()
+            ex_df["_order"] = ex_df["set_label"].map(
+                {lbl: i for i, lbl in enumerate(logic.SET_LABELS)}
+            )
+            ex_df = ex_df.sort_values("_order")
+
+            name = logic.EXERCISE_DISPLAY.get(exercise, exercise)
+            st.markdown(f"**🏋️ {name}**")
+            block = pd.DataFrame(
+                {
+                    "Satz": ex_df["set_label"].values,
+                    "Gewicht (kg)": [_fmt_num(x) for x in ex_df["weight"]],
+                    "Wdh.": ex_df["reps"].astype(int).values,
+                    "Volumen": [_fmt_num(x) for x in ex_df["volume"]],
+                    "≈ 1RM": [_fmt_num(x) for x in ex_df["est_1rm"]],
+                }
+            )
+            st.table(block.set_index("Satz"))
 
 
 def _last_training_banner(user: str, df, today: dt.date) -> None:
@@ -524,7 +567,7 @@ def _render_stats(user: str, df) -> None:
 
 
 def render_dashboard() -> None:
-    st.header("Auswertung – beide Nutzer im Vergleich")
+    st.header("Auswertung")
 
     user_a, user_b = logic.USERS[0], logic.USERS[1]
 

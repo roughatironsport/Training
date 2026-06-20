@@ -17,6 +17,13 @@ import pandas as pd
 USERS = ["Patric", "Sandeep"]
 EXERCISES = ["Deadlift", "Bench Press", "Squat"]
 
+# Deutsche Anzeigenamen der Übungen (für Blöcke/Tooltips).
+EXERCISE_DISPLAY = {
+    "Deadlift": "Kreuzheben",
+    "Bench Press": "Bankdrücken",
+    "Squat": "Kniebeuge",
+}
+
 # Satz-Layout pro Übung: 1 Aufwärmsatz + 3 Arbeitssätze.
 SET_LAYOUT = [
     ("warmup", "Aufwärmsatz"),
@@ -24,6 +31,8 @@ SET_LAYOUT = [
     ("work", "Arbeitssatz 2"),
     ("work", "Arbeitssatz 3"),
 ]
+# Reihenfolge der Satz-Labels (für sortierte Darstellung).
+SET_LABELS = [label for _type, label in SET_LAYOUT]
 
 # Auswahlwerte für die Eingabe-Dropdowns.
 # Gewicht in 2,5-kg-Schritten von 0 bis 300 kg.
@@ -381,30 +390,53 @@ def rest_day_stats(df: pd.DataFrame) -> dict:
     }
 
 
+def _format_sets(sets: list[dict]) -> str:
+    """Sätze kompakt: gleiches Gewicht -> 'w×r,r,r', sonst 'w1×r1/w2×r2'."""
+    if not sets:
+        return ""
+    weights = {float(s.get("weight", 0)) for s in sets}
+    if len(weights) == 1:
+        w = next(iter(weights))
+        reps = ",".join(str(int(s.get("reps", 0))) for s in sets)
+        return f"{w:g}×{reps}"
+    return "/".join(
+        f"{float(s.get('weight', 0)):g}×{int(s.get('reps', 0))}" for s in sets
+    )
+
+
 def day_summaries(documents: list[dict]) -> dict:
     """
-    Kurze Leistungs-Zusammenfassung je Trainingstag (für den Kalender-Hover).
+    Leistungs-Zusammenfassung je Trainingstag (für den Kalender-Hover) –
+    pro Übung eine Zeile (deutscher Name), Arbeitssätze + Aufwärmsatz.
 
     Returns:
-        {date_str: "Squat 100×5,5,5 · Bench 80×5,5,5", ...}
-        (nur Arbeitssätze; gleiches Gewicht wird zu 'w×r,r,r' zusammengefasst).
+        {date_str: "Kreuzheben: 200×5,5,5 · Aufw. 100×8<br>Bankdrücken: ..."}
     """
-    by_date: dict[str, list[str]] = {}
+    by_date: dict[str, dict[str, str]] = {}
     for doc in documents:
-        work = [s for s in doc.get("sets", []) if s.get("type") == "work"]
-        if not work:
+        sets = doc.get("sets", [])
+        work = [s for s in sets if s.get("type") == "work"]
+        warm = [s for s in sets if s.get("type") == "warmup"]
+        if not work and not warm:
             continue
-        weights = {float(s.get("weight", 0)) for s in work}
-        if len(weights) == 1:
-            w = next(iter(weights))
-            reps = ",".join(str(int(s.get("reps", 0))) for s in work)
-            seg = f"{w:g}×{reps}"
-        else:
-            seg = "/".join(
-                f"{float(s.get('weight', 0)):g}×{int(s.get('reps', 0))}" for s in work
-            )
-        by_date.setdefault(doc["date"], []).append(f"{doc['exercise']} {seg}")
-    return {date: " · ".join(parts) for date, parts in by_date.items()}
+
+        parts = []
+        work_seg = _format_sets(work)
+        if work_seg:
+            parts.append(work_seg)
+        warm_seg = _format_sets(warm)
+        if warm_seg:
+            parts.append(f"Aufw. {warm_seg}")
+
+        name = EXERCISE_DISPLAY.get(doc["exercise"], doc["exercise"])
+        by_date.setdefault(doc["date"], {})[doc["exercise"]] = f"{name}: " + " · ".join(parts)
+
+    # Übungen in fester Reihenfolge (EXERCISES) ausgeben.
+    result = {}
+    for date, ex_map in by_date.items():
+        lines = [ex_map[ex] for ex in EXERCISES if ex in ex_map]
+        result[date] = "<br>".join(lines)
+    return result
 
 
 def combined_calendar_matrix(dates_by_user: dict, summaries_by_user: dict | None = None) -> dict | None:
@@ -449,15 +481,18 @@ def combined_calendar_matrix(dates_by_user: dict, summaries_by_user: dict | None
             code = 3 if (in_a and in_b) else (1 if in_a else (2 if in_b else 0))
             z_row.append(code)
 
-            # Hover: Datum + pro Nutzer eine Zusammenfassung der Leistung.
+            # Hover: Datum + pro Nutzer ein Block mit der Leistung (Übungszeilen).
             day_key = day.strftime("%Y-%m-%d")
-            lines = [f"<b>{day.strftime('%a %d.%m.%Y')}</b>"]
+            lines = [f"<b>📅 {day.strftime('%A, %d.%m.%Y')}</b>"]
             for u, hit in ((users[0], in_a), (users[1], in_b)):
                 if hit:
-                    summary = summaries_by_user.get(u, {}).get(day_key, "trainiert")
-                    lines.append(f"{u}: {summary}")
+                    summary = summaries_by_user.get(u, {}).get(day_key)
+                    if summary:
+                        lines.append(f"<b>{u}</b><br>{summary}")
+                    else:
+                        lines.append(f"<b>{u}</b>: trainiert")
             if len(lines) == 1:
-                lines.append("frei")
+                lines.append("— frei —")
             t_row.append("<br>".join(lines))
         z.append(z_row)
         text.append(t_row)
