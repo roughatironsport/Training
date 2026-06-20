@@ -43,7 +43,7 @@ def inject_css() -> None:
     st.markdown(
         """
         <style>
-          .block-container { padding-top: 2.0rem; max-width: 1250px; }
+          .block-container { padding-top: 2.8rem; max-width: 1250px; }
           h1, h2, h3 { letter-spacing: -0.01em; }
           hr { margin: 1.1rem 0; }
 
@@ -78,10 +78,10 @@ def app_banner(subtitle: str) -> None:
     st.markdown(
         f"""
         <div style="display:flex;align-items:center;gap:.6rem;
-                    padding:.2rem 0 1rem;border-bottom:2px solid #eef1f5;margin-bottom:1.1rem">
-          <span style="font-size:1.9rem">🏋️</span>
+                    padding:.6rem 0 1rem;border-bottom:2px solid #eef1f5;margin-bottom:1.1rem">
+          <span style="font-size:1.9rem;line-height:1.3">🏋️</span>
           <div>
-            <div style="font-size:1.55rem;font-weight:800;line-height:1">Trainingstagebuch</div>
+            <div style="font-size:1.55rem;font-weight:800;line-height:1.3;padding-top:2px">Trainingstagebuch</div>
             <div style="font-size:.85rem;color:#64748b">{subtitle}</div>
           </div>
         </div>
@@ -736,11 +736,46 @@ def _last_training_banner(user: str, df, today: dt.date) -> None:
     elif len(vol) == 1:
         vol_line = "<div style='font-size:0.9rem;color:#999'>erstes Training – kein Vergleich</div>"
 
+    # Volumen-Veränderung je Einzeldisziplin (letztes Mal dieser Übung vs. davor).
+    vpe = logic.volume_per_exercise_session(df)
+    ex_rows = []
+    for exercise in logic.EXERCISES:
+        g = vpe[vpe["exercise"] == exercise].sort_values("date")
+        vals = list(g["volume"])
+        name = logic.EXERCISE_DISPLAY.get(exercise, exercise)
+        if len(vals) >= 2:
+            prev, latest = vals[-2], vals[-1]
+            pct = (latest - prev) / prev * 100 if prev else 0.0
+            if pct > 0:
+                ec, arrow = "#2ca02c", "▲"
+            elif pct < 0:
+                ec, arrow = "#d62728", "▼"
+            else:
+                ec, arrow = "#888888", "="
+            ex_rows.append(
+                f"<div style='font-size:0.9rem'>{name}: "
+                f"<span style='color:{ec};font-weight:600'>{arrow} {pct:+.1f}%</span></div>"
+            )
+        elif len(vals) == 1:
+            ex_rows.append(f"<div style='font-size:0.9rem;color:#999'>{name}: erstes Mal</div>")
+
+    ex_tip = (
+        "Veränderung des Volumens (Gewicht × Wiederholungen) je Übung im letzten "
+        "Training gegenüber dem vorherigen Mal dieser Übung."
+    )
+    ex_block = ""
+    if ex_rows:
+        ex_block = (
+            f"<div title='{ex_tip}' style='margin-top:.45rem;font-size:0.8rem;color:#666;cursor:help'>"
+            "Volumen je Übung ⓘ</div>" + "".join(ex_rows)
+        )
+
     time_tip = "Anzahl Tage seit dem letzten Trainingstag dieses Nutzers."
     st.markdown(
         f"<div style='font-size:1.0rem;color:#666'>{user} – letztes Training</div>"
         f"<div title='{time_tip}' style='font-size:2.3rem;font-weight:800;color:{color};line-height:1.1;cursor:help'>{text}</div>"
-        f"{vol_line}",
+        f"{vol_line}"
+        f"{ex_block}",
         unsafe_allow_html=True,
     )
 

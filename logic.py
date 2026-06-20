@@ -342,6 +342,22 @@ def volume_per_session(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def volume_per_exercise_session(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Volumen (Gewicht × Reps, nur Arbeitssätze) je Übung und Trainingstag.
+
+    Spalten: date, exercise, volume
+    """
+    ws = working_sets(df)
+    if ws.empty:
+        return pd.DataFrame(columns=["date", "exercise", "volume"])
+    return (
+        ws.groupby(["date", "exercise"], as_index=False)["volume"]
+        .sum()
+        .sort_values("date")
+    )
+
+
 def training_dates(df: pd.DataFrame) -> list:
     """Sortierte Liste der unterschiedlichen Trainingstage (als Timestamps)."""
     if df.empty:
