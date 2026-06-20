@@ -191,34 +191,63 @@ def volume_per_session(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def training_count(df: pd.DataFrame) -> int:
-    """Anzahl der Trainingseinheiten = Anzahl unterschiedlicher Trainingstage."""
+def training_dates(df: pd.DataFrame) -> list:
+    """Sortierte Liste der unterschiedlichen Trainingstage (als Timestamps)."""
     if df.empty:
-        return 0
-    return int(df["date"].dt.normalize().nunique())
+        return []
+    return sorted(set(df["date"].dt.normalize()))
 
 
-def calendar_matrix(df: pd.DataFrame) -> dict | None:
+def rest_day_stats(df: pd.DataFrame) -> dict:
     """
-    Baut die Daten für eine kalenderartige Heatmap (GitHub-Stil, vertikal:
-    eine Zeile pro Kalenderwoche, sieben Spalten Mo–So).
+    Pausen-Statistik über den aktiven Zeitraum (erster bis letzter Trainingstag).
 
-    Returns:
-        dict mit
-            z:        2D-Liste (0/1 – ob an dem Tag trainiert wurde)
-            y_labels: Wochen-Labels (Datum des Montags), chronologisch
-            x_labels: ["Mo", "Di", ... , "So"]
-            text:     2D-Liste mit Hover-Text je Tag
-        oder None, wenn keine Daten vorhanden sind.
+    Returns dict mit:
+        sessions:      Anzahl Trainingseinheiten (= Trainingstage)
+        rest_days:     Pausentage gesamt (Tage im Zeitraum ohne Training)
+        avg_gap:       Ø Tage zwischen zwei Einheiten (z. B. 7.0 = wöchentlich)
+        longest_break: längste Pause am Stück (Pausentage zwischen zwei Einheiten)
     """
-    if df.empty:
+    dates = training_dates(df)
+    n = len(dates)
+    if n <= 1:
+        return {"sessions": n, "rest_days": 0, "avg_gap": 0.0, "longest_break": 0}
+
+    # Abstände in Tagen zwischen aufeinanderfolgenden Einheiten.
+    diffs = [(dates[i] - dates[i - 1]).days for i in range(1, n)]
+    span_days = (dates[-1] - dates[0]).days + 1  # inkl. erstem und letztem Tag
+
+    return {
+        "sessions": n,
+        "rest_days": span_days - n,           # Tage ohne Training im Zeitraum
+        "avg_gap": round(sum(diffs) / len(diffs), 1),
+        "longest_break": max(diffs) - 1,      # reine Pausentage am Stück
+    }
+
+
+def combined_calendar_matrix(dates_by_user: dict) -> dict | None:
+    """
+    Gemeinsamer Trainingskalender für beide Nutzer (vertikal, eine Zeile pro
+    Kalenderwoche, Spalten Mo–So). Jeder Tag wird codiert, WER trainiert hat.
+
+    Args:
+        dates_by_user: {userA: set(Timestamps), userB: set(Timestamps)} –
+                       Reihenfolge bestimmt die Farbzuordnung (A, B).
+
+    Codierung in z:
+        0 = niemand, 1 = nur userA, 2 = nur userB, 3 = beide
+
+    Returns dict (z, y_labels, x_labels, text, users) oder None, wenn keine Daten.
+    """
+    users = list(dates_by_user.keys())
+    set_a = dates_by_user[users[0]]
+    set_b = dates_by_user[users[1]]
+    all_days_trained = set_a | set_b
+    if not all_days_trained:
         return None
 
-    trained_days = set(df["date"].dt.normalize())
-    start = min(trained_days)
-    end = max(trained_days)
-
-    # Auf volle Wochen ausrichten: Montag vor dem ersten, Sonntag nach dem letzten Tag.
+    start = min(all_days_trained)
+    end = max(all_days_trained)
     start_monday = start - pd.Timedelta(days=start.weekday())
     end_sunday = end + pd.Timedelta(days=6 - end.weekday())
     all_days = pd.date_range(start_monday, end_sunday, freq="D")
@@ -227,15 +256,18 @@ def calendar_matrix(df: pd.DataFrame) -> dict | None:
     text: list[list[str]] = []
     y_labels: list[str] = []
 
-    # In 7er-Blöcke (Wochen) gruppieren.
     for i in range(0, len(all_days), 7):
         week = all_days[i : i + 7]
         z_row, t_row = [], []
         for day in week:
-            trained = day in trained_days
-            z_row.append(1 if trained else 0)
-            mark = " · ✓ trainiert" if trained else ""
-            t_row.append(f"{day.strftime('%a %d.%m.%Y')}{mark}")
+            in_a = day in set_a
+            in_b = day in set_b
+            code = 3 if (in_a and in_b) else (1 if in_a else (2 if in_b else 0))
+            z_row.append(code)
+
+            who = [u for u, hit in ((users[0], in_a), (users[1], in_b)) if hit]
+            label = " + ".join(who) if who else "frei"
+            t_row.append(f"{day.strftime('%a %d.%m.%Y')} · {label}")
         z.append(z_row)
         text.append(t_row)
         y_labels.append(week[0].strftime("%d.%m."))
@@ -245,6 +277,7 @@ def calendar_matrix(df: pd.DataFrame) -> dict | None:
         "y_labels": y_labels,
         "x_labels": ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"],
         "text": text,
+        "users": users,
     }
 
 

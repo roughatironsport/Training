@@ -136,8 +136,22 @@ def render_input_page(user: str, date: dt.date) -> None:
 # ---------------------------------------------------------------------------
 # Seite 2: Dashboard / Auswertung
 # ---------------------------------------------------------------------------
-def _calendar_figure(cal: dict):
-    """Baut aus logic.calendar_matrix(...) eine kalenderartige Plotly-Heatmap."""
+# Farbzuordnung für den gemeinsamen Kalender (muss zur Legende passen).
+CAL_COLOR_A = "#1f77b4"     # nur User A (Patric) – blau
+CAL_COLOR_B = "#ff7f0e"     # nur User B (Sandeep) – orange
+CAL_COLOR_BOTH = "#2ca02c"  # beide – grün
+CAL_COLOR_NONE = "#ebedf0"  # niemand – grau
+
+
+def _combined_calendar_figure(cal: dict):
+    """Gemeinsamer Trainingskalender beider Nutzer als Plotly-Heatmap."""
+    # Diskrete Farbskala für die 4 Codes 0..3 (je Wert ein konstanter Block).
+    colorscale = [
+        [0.00, CAL_COLOR_NONE], [0.25, CAL_COLOR_NONE],
+        [0.25, CAL_COLOR_A],    [0.50, CAL_COLOR_A],
+        [0.50, CAL_COLOR_B],    [0.75, CAL_COLOR_B],
+        [0.75, CAL_COLOR_BOTH], [1.00, CAL_COLOR_BOTH],
+    ]
     fig = go.Figure(
         go.Heatmap(
             z=cal["z"],
@@ -148,14 +162,13 @@ def _calendar_figure(cal: dict):
             xgap=3,
             ygap=3,
             zmin=0,
-            zmax=1,
-            colorscale=[[0, "#ebedf0"], [1, "#216e39"]],  # grau -> grün
+            zmax=3,
+            colorscale=colorscale,
             showscale=False,
         )
     )
-    # Höhe an Anzahl Wochen koppeln, damit Zellen quadratisch wirken.
     fig.update_layout(
-        height=max(160, 26 * len(cal["y_labels"]) + 50),
+        height=max(180, 26 * len(cal["y_labels"]) + 50),
         margin=dict(l=10, r=10, t=20, b=10),
     )
     fig.update_xaxes(side="top", fixedrange=True)
@@ -164,28 +177,13 @@ def _calendar_figure(cal: dict):
     return fig
 
 
-def render_user_panel(user: str) -> None:
-    """Rendert die komplette Auswertung EINES Nutzers (für eine Spalte)."""
+def render_user_panel(user: str, df) -> None:
+    """Rendert PRs + Verlaufs-Charts EINES Nutzers (für eine Spalte)."""
     st.subheader(user)
-
-    try:
-        documents = db.fetch_trainings(user)
-    except Exception as exc:  # noqa: BLE001
-        st.error(f"Daten konnten nicht geladen werden: {exc}")
-        return
-
-    df = logic.documents_to_dataframe(documents)
 
     if df.empty:
         st.info(f"Für **{user}** sind noch keine Trainings gespeichert.")
         return
-
-    # --- Trainingshäufigkeit -----------------------------------------------
-    st.metric("Trainingseinheiten gesamt", logic.training_count(df))
-    cal = logic.calendar_matrix(df)
-    if cal:
-        st.caption("Trainingskalender (grün = trainiert)")
-        st.plotly_chart(_calendar_figure(cal), use_container_width=True)
 
     # --- Persönliche Bestleistungen ----------------------------------------
     prs = logic.personal_records(df)
@@ -272,15 +270,68 @@ def render_user_panel(user: str) -> None:
         )
 
 
+def _render_stats(user: str, df) -> None:
+    """Kennzahlen-Block (Einheiten + Pausen) für einen Nutzer."""
+    st.markdown(f"**{user}**")
+    stats = logic.rest_day_stats(df)
+    c1, c2 = st.columns(2)
+    c1.metric("Trainingseinheiten", stats["sessions"])
+    c2.metric("Pausentage gesamt", stats["rest_days"])
+    c3, c4 = st.columns(2)
+    c3.metric("Ø Tage zwischen Einheiten", stats["avg_gap"])
+    c4.metric("Längste Pause (Tage)", stats["longest_break"])
+
+
 def render_dashboard() -> None:
     st.header("Auswertung – beide Nutzer im Vergleich")
 
-    # Immer beide nebeneinander: links USERS[0] (Patric), rechts USERS[1] (Sandeep).
+    user_a, user_b = logic.USERS[0], logic.USERS[1]
+
+    # Daten beider Nutzer einmal laden.
+    try:
+        df_a = logic.documents_to_dataframe(db.fetch_trainings(user_a))
+        df_b = logic.documents_to_dataframe(db.fetch_trainings(user_b))
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Daten konnten nicht geladen werden: {exc}")
+        return
+
+    # --- Gemeinsamer Trainingskalender (volle Breite) ----------------------
+    st.subheader("Gemeinsamer Trainingskalender")
+    cal = logic.combined_calendar_matrix(
+        {
+            user_a: set(logic.training_dates(df_a)),
+            user_b: set(logic.training_dates(df_b)),
+        }
+    )
+    if cal is None:
+        st.info("Noch keine Trainings vorhanden.")
+    else:
+        # Legende passend zu den Farben in _combined_calendar_figure.
+        st.markdown(
+            f"<span style='color:{CAL_COLOR_A}'>■</span> {user_a} &nbsp; "
+            f"<span style='color:{CAL_COLOR_B}'>■</span> {user_b} &nbsp; "
+            f"<span style='color:{CAL_COLOR_BOTH}'>■</span> beide &nbsp; "
+            f"<span style='color:{CAL_COLOR_NONE}'>■</span> frei",
+            unsafe_allow_html=True,
+        )
+        st.plotly_chart(_combined_calendar_figure(cal), use_container_width=True)
+
+    # --- Statistik-Vergleich -----------------------------------------------
+    st.subheader("Statistik")
+    stat_left, stat_right = st.columns(2)
+    with stat_left:
+        _render_stats(user_a, df_a)
+    with stat_right:
+        _render_stats(user_b, df_b)
+
+    st.divider()
+
+    # --- Detail-Panels nebeneinander: links A (Patric), rechts B (Sandeep) -
     col_left, col_right = st.columns(2)
     with col_left:
-        render_user_panel(logic.USERS[0])
+        render_user_panel(user_a, df_a)
     with col_right:
-        render_user_panel(logic.USERS[1])
+        render_user_panel(user_b, df_b)
 
 
 # ---------------------------------------------------------------------------
