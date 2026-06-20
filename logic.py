@@ -381,7 +381,33 @@ def rest_day_stats(df: pd.DataFrame) -> dict:
     }
 
 
-def combined_calendar_matrix(dates_by_user: dict) -> dict | None:
+def day_summaries(documents: list[dict]) -> dict:
+    """
+    Kurze Leistungs-Zusammenfassung je Trainingstag (für den Kalender-Hover).
+
+    Returns:
+        {date_str: "Squat 100×5,5,5 · Bench 80×5,5,5", ...}
+        (nur Arbeitssätze; gleiches Gewicht wird zu 'w×r,r,r' zusammengefasst).
+    """
+    by_date: dict[str, list[str]] = {}
+    for doc in documents:
+        work = [s for s in doc.get("sets", []) if s.get("type") == "work"]
+        if not work:
+            continue
+        weights = {float(s.get("weight", 0)) for s in work}
+        if len(weights) == 1:
+            w = next(iter(weights))
+            reps = ",".join(str(int(s.get("reps", 0))) for s in work)
+            seg = f"{w:g}×{reps}"
+        else:
+            seg = "/".join(
+                f"{float(s.get('weight', 0)):g}×{int(s.get('reps', 0))}" for s in work
+            )
+        by_date.setdefault(doc["date"], []).append(f"{doc['exercise']} {seg}")
+    return {date: " · ".join(parts) for date, parts in by_date.items()}
+
+
+def combined_calendar_matrix(dates_by_user: dict, summaries_by_user: dict | None = None) -> dict | None:
     """
     Gemeinsamer Trainingskalender für beide Nutzer (vertikal, eine Zeile pro
     Kalenderwoche, Spalten Mo–So). Jeder Tag wird codiert, WER trainiert hat.
@@ -402,6 +428,8 @@ def combined_calendar_matrix(dates_by_user: dict) -> dict | None:
     if not all_days_trained:
         return None
 
+    summaries_by_user = summaries_by_user or {}
+
     start = min(all_days_trained)
     end = max(all_days_trained)
     start_monday = start - pd.Timedelta(days=start.weekday())
@@ -421,9 +449,16 @@ def combined_calendar_matrix(dates_by_user: dict) -> dict | None:
             code = 3 if (in_a and in_b) else (1 if in_a else (2 if in_b else 0))
             z_row.append(code)
 
-            who = [u for u, hit in ((users[0], in_a), (users[1], in_b)) if hit]
-            label = " + ".join(who) if who else "frei"
-            t_row.append(f"{day.strftime('%a %d.%m.%Y')} · {label}")
+            # Hover: Datum + pro Nutzer eine Zusammenfassung der Leistung.
+            day_key = day.strftime("%Y-%m-%d")
+            lines = [f"<b>{day.strftime('%a %d.%m.%Y')}</b>"]
+            for u, hit in ((users[0], in_a), (users[1], in_b)):
+                if hit:
+                    summary = summaries_by_user.get(u, {}).get(day_key, "trainiert")
+                    lines.append(f"{u}: {summary}")
+            if len(lines) == 1:
+                lines.append("frei")
+            t_row.append("<br>".join(lines))
         z.append(z_row)
         text.append(t_row)
 
@@ -452,7 +487,9 @@ def personal_records(df: pd.DataFrame) -> pd.DataFrame:
     """
     ws = working_sets(df)
     if ws.empty:
-        return pd.DataFrame(columns=["exercise", "max_weight", "reps_at_max", "best_1rm"])
+        return pd.DataFrame(
+            columns=["exercise", "max_weight", "reps_at_max", "best_1rm", "date"]
+        )
 
     rows = []
     for exercise, group in ws.groupby("exercise"):
@@ -466,6 +503,7 @@ def personal_records(df: pd.DataFrame) -> pd.DataFrame:
                 "max_weight": weight,
                 "reps_at_max": reps,
                 "best_1rm": estimate_1rm(weight, reps),
+                "date": top["date"],  # wann der PR erzielt wurde
             }
         )
     return pd.DataFrame(rows)

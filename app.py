@@ -66,8 +66,8 @@ def _sidebar_rest_days(days: int | None) -> None:
     )
 
 
-def render_sidebar(user: str) -> tuple[dt.date, str]:
-    """Zeichnet die Sidebar und gibt (datum, seite) zurück."""
+def render_sidebar(user: str) -> str:
+    """Zeichnet die Sidebar und gibt die gewählte Seite zurück."""
     st.sidebar.title("🏋️ Trainingstagebuch")
 
     # Verbindungsstatus aktiv prüfen, damit Fehler früh sichtbar sind.
@@ -93,16 +93,12 @@ def render_sidebar(user: str) -> tuple[dt.date, str]:
     auth.logout_button()
 
     st.sidebar.divider()
-
-    date = st.sidebar.date_input("Datum", value=dt.date.today())
-
-    st.sidebar.divider()
     page = st.sidebar.radio(
         "Bereich", ["Training eintragen", "Auswertung", "Bearbeiten & Löschen"]
     )
 
     st.sidebar.caption("Beide Nutzer sehen alle Daten gemeinsam.")
-    return date, page
+    return page
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +119,36 @@ def _fmt_num(x: float) -> str:
     """Zahl auf 0,5 gerundet: ganzzahlig ohne Nachkommastelle, sonst mit .5."""
     rounded = round(x * 2) / 2
     return f"{int(rounded)}" if rounded == int(rounded) else f"{rounded:.1f}"
+
+
+def _pct_delta_str(values: list) -> str | None:
+    """
+    Prozentuale Änderung vom vorletzten zum letzten Wert (None bei < 2 Werten).
+    st.metric stellt das Vorzeichen automatisch als grünen ↑ / roten ↓ Pfeil dar.
+    """
+    if len(values) < 2:
+        return None
+    prev, latest = float(values[-2]), float(values[-1])
+    pct = (latest - prev) / prev * 100 if prev else 0.0
+    return f"{pct:+.1f}%"
+
+
+def _render_change_metrics(series_df, value_col: str) -> None:
+    """
+    Kachelreihe je Übung: aktueller Wert + %-Änderung zur vorigen Einheit
+    (grüner ↑ / roter ↓ Pfeil via st.metric).
+    """
+    st.caption("Veränderung zur vorigen Einheit")
+    exercises = list(series_df["exercise"].unique())
+    cols = st.columns(len(exercises))
+    for col, exercise in zip(cols, exercises):
+        group = series_df[series_df["exercise"] == exercise].sort_values("date")
+        values = list(group[value_col])
+        col.metric(
+            exercise,
+            f"{_fmt_num(values[-1])} kg",
+            delta=_pct_delta_str(values),
+        )
 
 
 def _delta_str(new_v: float, prev_v: float, unit: str, decimals: int) -> str:
@@ -184,8 +210,12 @@ def _progress_dialog(comparisons: list[dict], user: str, date_str: str) -> None:
         st.rerun()
 
 
-def render_input_page(user: str, date: dt.date) -> None:
+def render_input_page(user: str) -> None:
     st.header("Training eintragen")
+
+    # Punkt 1: Datum hier oben wählen (nicht mehr in der Sidebar).
+    date = st.date_input("Datum des Trainings", value=dt.date.today())
+
     st.caption(
         f"Nutzer: **{user}**  ·  Datum: **{date.isoformat()}**  ·  "
         "Pro Übung 1 Aufwärmsatz + 3 Arbeitssätze."
@@ -346,6 +376,19 @@ def render_user_panel(user: str, df) -> None:
     prs = logic.personal_records(df)
     if not prs.empty:
         st.caption("Persönliche Bestleistungen")
+        today = dt.date.today()
+
+        def _date_with_ago(ts) -> str:
+            d = ts.date()
+            days = (today - d).days
+            if days == 0:
+                ago = "heute"
+            elif days == 1:
+                ago = "vor 1 Tag"
+            else:
+                ago = f"vor {days} Tagen"
+            return f"{d.strftime('%d.%m.%Y')} ({ago})"
+
         # Bestes Gewicht inkl. Wiederholungen; Zahlen auf 0,5 gerundet.
         pr_display = pd.DataFrame(
             {
@@ -355,6 +398,7 @@ def render_user_panel(user: str, df) -> None:
                     for w, r in zip(prs["max_weight"], prs["reps_at_max"])
                 ],
                 "≈ 1RM (kg)": [_fmt_num(v) for v in prs["best_1rm"]],
+                "Datum": [_date_with_ago(ts) for ts in prs["date"]],
             }
         )
         # st.table (server-seitig) statt st.dataframe -> kein dynamisches JS-Modul.
@@ -368,6 +412,7 @@ def render_user_panel(user: str, df) -> None:
         if prog.empty:
             st.info("Keine Arbeitssätze vorhanden.")
         else:
+            _render_change_metrics(prog, "max_weight")
             fig = px.line(
                 prog,
                 x="date",
@@ -384,6 +429,7 @@ def render_user_panel(user: str, df) -> None:
         if rm.empty:
             st.info("Keine Arbeitssätze vorhanden.")
         else:
+            _render_change_metrics(rm, "best_1rm")
             fig = px.line(
                 rm,
                 x="date",
@@ -400,6 +446,9 @@ def render_user_panel(user: str, df) -> None:
         if vol.empty:
             st.info("Keine Arbeitssätze vorhanden.")
         else:
+            st.caption("Veränderung zur vorigen Einheit")
+            vals = list(vol.sort_values("date")["volume"])
+            st.metric("Volumen letzte Einheit", f"{_fmt_num(vals[-1])} kg", delta=_pct_delta_str(vals))
             fig = px.bar(
                 vol,
                 x="date",
@@ -409,27 +458,28 @@ def render_user_panel(user: str, df) -> None:
             fig.update_layout(margin=dict(t=10))
             st.plotly_chart(fig, use_container_width=True)
 
-    # --- Rohdaten (eingeklappt, damit die Spalte schlank bleibt) -----------
+    # --- Rohdaten je Datum (eingeklappt) -----------------------------------
     with st.expander("Alle Sätze anzeigen"):
-        table = df.copy()
-        table["date"] = table["date"].dt.date
-        table = table.rename(
-            columns={
-                "date": "Datum",
-                "exercise": "Übung",
-                "set_label": "Satz",
-                "weight": "Gewicht (kg)",
-                "reps": "Wdh.",
-                "volume": "Volumen",
-                "est_1rm": "≈ 1RM",
+        dates = sorted(df["date"].dt.date.unique(), reverse=True)
+        sel_date = st.selectbox(
+            "Datum wählen",
+            dates,
+            format_func=lambda d: d.strftime("%d.%m.%Y"),
+            key=f"alle_saetze_{user}",
+        )
+        day_df = df[df["date"].dt.date == sel_date]
+        # Zahlen ohne überflüssige Nachkommastellen (0,5-Rundung).
+        display = pd.DataFrame(
+            {
+                "Übung": day_df["exercise"].values,
+                "Satz": day_df["set_label"].values,
+                "Gewicht (kg)": [_fmt_num(x) for x in day_df["weight"]],
+                "Wdh.": day_df["reps"].astype(int).values,
+                "Volumen": [_fmt_num(x) for x in day_df["volume"]],
+                "≈ 1RM": [_fmt_num(x) for x in day_df["est_1rm"]],
             }
         )
-        show_cols = ["Datum", "Übung", "Satz", "Gewicht (kg)", "Wdh.", "Volumen", "≈ 1RM"]
-        sorted_table = table[show_cols].sort_values(
-            ["Datum", "Übung"], ascending=[False, True]
-        )
-        # st.table statt st.dataframe -> umgeht das fehlschlagende JS-Modul.
-        st.table(sorted_table.set_index(["Datum", "Übung", "Satz"]))
+        st.table(display.set_index(["Übung", "Satz"]))
 
 
 def _last_training_banner(user: str, df, today: dt.date) -> None:
@@ -478,13 +528,15 @@ def render_dashboard() -> None:
 
     user_a, user_b = logic.USERS[0], logic.USERS[1]
 
-    # Daten beider Nutzer einmal laden.
+    # Daten beider Nutzer einmal laden (Rohdokumente + DataFrame).
     try:
-        df_a = logic.documents_to_dataframe(db.fetch_trainings(user_a))
-        df_b = logic.documents_to_dataframe(db.fetch_trainings(user_b))
+        docs_a = db.fetch_trainings(user_a)
+        docs_b = db.fetch_trainings(user_b)
     except Exception as exc:  # noqa: BLE001
         st.error(f"Daten konnten nicht geladen werden: {exc}")
         return
+    df_a = logic.documents_to_dataframe(docs_a)
+    df_b = logic.documents_to_dataframe(docs_b)
 
     # --- Zeit seit letztem Training (auffällig, ampelfarben) ----------------
     today = dt.date.today()
@@ -502,7 +554,11 @@ def render_dashboard() -> None:
         {
             user_a: set(logic.training_dates(df_a)),
             user_b: set(logic.training_dates(df_b)),
-        }
+        },
+        summaries_by_user={
+            user_a: logic.day_summaries(docs_a),
+            user_b: logic.day_summaries(docs_b),
+        },
     )
     if cal is None:
         st.info("Noch keine Trainings vorhanden.")
@@ -631,10 +687,10 @@ def main() -> None:
     if not user:
         st.stop()
 
-    date, page = render_sidebar(user)
+    page = render_sidebar(user)
 
     if page == "Training eintragen":
-        render_input_page(user, date)
+        render_input_page(user)
     elif page == "Auswertung":
         render_dashboard()
     else:
