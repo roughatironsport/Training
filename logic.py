@@ -25,6 +25,12 @@ SET_LAYOUT = [
     ("work", "Arbeitssatz 3"),
 ]
 
+# Auswahlwerte für die Eingabe-Dropdowns.
+# Gewicht in 2,5-kg-Schritten von 0 bis 300 kg.
+WEIGHT_OPTIONS = [round(i * 2.5, 1) for i in range(0, 121)]
+# Wiederholungen ganzzahlig von 0 bis 15.
+REP_OPTIONS = list(range(0, 16))
+
 
 def estimate_1rm(weight: float, reps: int) -> float:
     """

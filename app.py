@@ -88,18 +88,21 @@ def render_input_page(user: str, date: dt.date) -> None:
             for col, (set_type, label) in zip(cols, logic.SET_LAYOUT):
                 with col:
                     st.markdown(f"**{label}**")
-                    weight = st.number_input(
+                    # Gewicht als Dropdown in 2,5-kg-Schritten (Default 0 kg).
+                    weight = st.selectbox(
                         "Gewicht (kg)",
-                        min_value=0.0,
-                        step=2.5,
+                        logic.WEIGHT_OPTIONS,
+                        index=0,
+                        format_func=lambda w: f"{w:g} kg",
                         key=f"{exercise}_{label}_w",
                     )
-                    reps = st.number_input(
+                    # Wiederholungen als Dropdown 0–15.
+                    # Aufwärmsatz typ. mehr Reps, Arbeitssätze ~5 als Default.
+                    default_reps = 8 if set_type == "warmup" else 5
+                    reps = st.selectbox(
                         "Wdh.",
-                        min_value=0,
-                        step=1,
-                        # Aufwärmsatz typ. mehr Reps, Arbeitssätze ~5 als Default.
-                        value=8 if set_type == "warmup" else 5,
+                        logic.REP_OPTIONS,
+                        index=logic.REP_OPTIONS.index(default_reps),
                         key=f"{exercise}_{label}_r",
                     )
                     sets.append((weight, reps))
