@@ -474,9 +474,9 @@ def combined_calendar_matrix(
     start = min(all_days_trained)
     last_trained = max(all_days_trained)
 
-    # Planungshorizont nach dem letzten Training: mind. +7 Tage, bei Bedarf bis
-    # heute (gedeckelt auf +28 Tage, damit der Kalender nicht ausufert).
-    horizon = last_trained + pd.Timedelta(days=7)
+    # Planungshorizont nach dem letzten Training: mind. +14 Tage (2 Wochen),
+    # bei Bedarf bis heute (gedeckelt auf +28 Tage, damit es nicht ausufert).
+    horizon = last_trained + pd.Timedelta(days=14)
     if today is not None:
         horizon = max(horizon, min(pd.Timestamp(today), last_trained + pd.Timedelta(days=28)))
     end = max(last_trained, horizon)
@@ -498,15 +498,20 @@ def combined_calendar_matrix(
             code = 3 if (in_a and in_b) else (1 if in_a else (2 if in_b else 0))
 
             # Planungszone für Tage NACH dem letzten Training (ohne Eintrag).
+            # Tag 1 rot, Tag 2 gelb, 3–5 grün, 6–7 gelb, ab 8 rot.
             zone_note = ""
             if code == 0 and day > last_trained:
                 gap = (day - last_trained).days
-                if gap <= 3:
-                    code, zone_note = 4, "🟢 Ideal fürs nächste Training (1–3 Tage Pause)"
+                if gap == 1:
+                    code, zone_note = 6, "🔴 Zu früh – Regeneration (1 Tag Pause)"
+                elif gap == 2:
+                    code, zone_note = 5, "🟡 Fast bereit (2 Tage Pause)"
                 elif gap <= 5:
-                    code, zone_note = 5, "🟡 Bald wieder trainieren (4–5 Tage Pause)"
+                    code, zone_note = 4, "🟢 Ideales Zeitfenster (3–5 Tage Pause)"
+                elif gap <= 7:
+                    code, zone_note = 5, "🟡 Langsam wieder Zeit (6–7 Tage Pause)"
                 else:
-                    code, zone_note = 6, "🔴 Überfällig (mehr als 5 Tage Pause)"
+                    code, zone_note = 6, "🔴 Überfällig (mehr als 7 Tage Pause)"
             z_row.append(code)
 
             # Hover: Datum + Leistung je Nutzer bzw. Planungshinweis.

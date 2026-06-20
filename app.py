@@ -716,9 +716,9 @@ def render_dashboard() -> None:
             f"<span style='color:{CAL_COLOR_B};font-size:1.1rem'>■</span> {user_b} &nbsp; "
             f"<span style='color:{CAL_COLOR_BOTH};font-size:1.1rem'>■</span> beide &nbsp;&nbsp; "
             f"<b>Planung ab letztem Training:</b> &nbsp;"
-            f"<span style='color:{CAL_ZONE_GREEN};font-size:1.1rem'>■</span> ≤3 T. &nbsp; "
-            f"<span style='color:{CAL_ZONE_YELLOW};font-size:1.1rem'>■</span> 4–5 T. &nbsp; "
-            f"<span style='color:{CAL_ZONE_RED};font-size:1.1rem'>■</span> >5 T.",
+            f"<span style='color:{CAL_ZONE_GREEN};font-size:1.1rem'>■</span> ideal (3–5 T.) &nbsp; "
+            f"<span style='color:{CAL_ZONE_YELLOW};font-size:1.1rem'>■</span> Übergang (2 / 6–7 T.) &nbsp; "
+            f"<span style='color:{CAL_ZONE_RED};font-size:1.1rem'>■</span> zu früh / überfällig (1 / 8+ T.)",
             unsafe_allow_html=True,
         )
         st.plotly_chart(_combined_calendar_figure(cal), use_container_width=True)
