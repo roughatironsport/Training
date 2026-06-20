@@ -55,6 +55,7 @@ def require_login() -> str | None:
     if submitted:
         if _password_correct(user, password):
             st.session_state["auth_user"] = user
+            st.session_state["just_logged_in"] = True  # für Willkommens-Toast
             # Neu laden, damit die Login-Maske verschwindet und die App startet.
             st.rerun()
         else:

@@ -1,0 +1,7 @@
+# Globales Theme der App (wirkt auf alle Widgets).
+[theme]
+primaryColor = "#2563eb"              # kräftiges Blau (Akzent, Buttons, Fokus)
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f4f6f9"  # Sidebar / Karten dezent abgesetzt
+textColor = "#1f2933"
+font = "sans serif"

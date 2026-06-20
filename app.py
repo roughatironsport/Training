@@ -36,6 +36,75 @@ st.set_page_config(
 
 
 # ---------------------------------------------------------------------------
+# Globales Styling (Buttons, Metrik-Karten, Abstände) + Branding
+# ---------------------------------------------------------------------------
+def inject_css() -> None:
+    """Einmaliges, additives CSS – rein kosmetisch, keine Funktionsänderung."""
+    st.markdown(
+        """
+        <style>
+          .block-container { padding-top: 2.0rem; max-width: 1250px; }
+          h1, h2, h3 { letter-spacing: -0.01em; }
+          hr { margin: 1.1rem 0; }
+
+          /* Buttons: weiche Ecken, Hover-Feedback */
+          .stButton > button {
+            border-radius: 10px;
+            font-weight: 600;
+            transition: all .12s ease-in-out;
+            border: 1px solid #d8dee9;
+          }
+          .stButton > button:hover {
+            border-color: #2563eb;
+            transform: translateY(-1px);
+          }
+
+          /* Metrik-Kacheln als Karten */
+          div[data-testid="stMetric"] {
+            background: #f8fafc;
+            border: 1px solid #e6eaf0;
+            border-radius: 12px;
+            padding: 10px 14px;
+          }
+          div[data-testid="stMetricLabel"] { opacity: .75; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def app_banner(subtitle: str) -> None:
+    """Dezentes Branding-Banner statt nacktem st.header."""
+    st.markdown(
+        f"""
+        <div style="display:flex;align-items:center;gap:.6rem;
+                    padding:.2rem 0 1rem;border-bottom:2px solid #eef1f5;margin-bottom:1.1rem">
+          <span style="font-size:1.9rem">🏋️</span>
+          <div>
+            <div style="font-size:1.55rem;font-weight:800;line-height:1">Trainingstagebuch</div>
+            <div style="font-size:.85rem;color:#64748b">{subtitle}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _style_fig(fig):
+    """Einheitliches Plotly-Theming passend zum App-Look (Linien/Balken)."""
+    fig.update_layout(
+        template="plotly_white",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="sans-serif", size=13, color="#1f2933"),
+        colorway=["#2563eb", "#ff7f0e", "#16a34a"],
+    )
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(gridcolor="#eef1f5", zeroline=False)
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
 def _sidebar_rest_days(days: int | None) -> None:
@@ -70,10 +139,10 @@ def render_sidebar(user: str) -> str:
     """Zeichnet die Sidebar und gibt die gewählte Seite zurück."""
     st.sidebar.title("🏋️ Trainingstagebuch")
 
-    # Verbindungsstatus aktiv prüfen, damit Fehler früh sichtbar sind.
+    # Verbindungsstatus dezent (grün nur als kurze Zeile, Fehler weiterhin auffällig).
     ok, msg = db.ping()
     if ok:
-        st.sidebar.success(msg, icon="✅")
+        st.sidebar.caption("🟢 Datenbank verbunden")
     else:
         st.sidebar.error(msg, icon="⚠️")
 
@@ -93,11 +162,21 @@ def render_sidebar(user: str) -> str:
     auth.logout_button()
 
     st.sidebar.divider()
-    page = st.sidebar.radio(
-        "Bereich", ["Training eintragen", "Auswertung", "Bearbeiten & Löschen"]
+    # Navigation als segmented_control (klarer Modus-Umschalter); None abfangen.
+    pages = ["Training eintragen", "Auswertung", "Bearbeiten & Löschen"]
+    page = st.sidebar.segmented_control(
+        "Bereich", pages, default="Training eintragen", selection_mode="single"
     )
+    if page is None:
+        page = "Training eintragen"
 
     st.sidebar.caption("Beide Nutzer sehen alle Daten gemeinsam.")
+    # Dezentes Wasserzeichen / Branding.
+    st.sidebar.markdown(
+        "<div style='margin-top:1.2rem;font-size:.72rem;color:#cbd5e1'>"
+        "Trainingstagebuch · Patric &amp; Sandeep</div>",
+        unsafe_allow_html=True,
+    )
     return page
 
 
@@ -226,7 +305,7 @@ def _progress_dialog(comparisons: list[dict], user: str, date_str: str) -> None:
 
 
 def render_input_page(user: str) -> None:
-    st.header("Training eintragen")
+    app_banner("Training eintragen")
 
     # Punkt 1: Datum hier oben wählen (nicht mehr in der Sidebar).
     date = st.date_input("Datum des Trainings", value=dt.date.today())
@@ -326,7 +405,17 @@ def render_input_page(user: str) -> None:
         exercise_inputs[exercise] = sets
         st.divider()
 
-    submitted = st.button("💾 Speichern", type="primary", disabled=already_logged)
+    submitted = st.button(
+        "💾 Speichern",
+        type="primary",
+        disabled=already_logged,
+        help=(
+            "Für diesen Tag existiert bereits ein Training – Änderungen unter "
+            "„Bearbeiten & Löschen“."
+            if already_logged
+            else "Trainingstag speichern"
+        ),
+    )
 
     if submitted:
         documents = logic.build_set_documents(user, date.isoformat(), exercise_inputs)
@@ -362,17 +451,27 @@ CAL_COLOR_A = "#1f77b4"     # nur User A (Patric) – blau
 CAL_COLOR_B = "#ff7f0e"     # nur User B (Sandeep) – orange
 CAL_COLOR_BOTH = "#2ca02c"  # beide – grün
 CAL_COLOR_NONE = "#ebedf0"  # niemand – grau
+# Planungszonen ab letztem Training (blass, damit klar von "trainiert" trennbar).
+CAL_ZONE_GREEN = "#c7eccb"   # 1–3 Tage Pause
+CAL_ZONE_YELLOW = "#fdeeba"  # 4–5 Tage Pause
+CAL_ZONE_RED = "#f6c6c6"     # >5 Tage Pause
+
+# Reihenfolge = Codes 0..6 (siehe logic.combined_calendar_matrix).
+_CAL_COLORS = [
+    CAL_COLOR_NONE, CAL_COLOR_A, CAL_COLOR_B, CAL_COLOR_BOTH,
+    CAL_ZONE_GREEN, CAL_ZONE_YELLOW, CAL_ZONE_RED,
+]
 
 
 def _combined_calendar_figure(cal: dict):
     """Gemeinsamer Trainingskalender beider Nutzer als Plotly-Heatmap."""
-    # Diskrete Farbskala für die 4 Codes 0..3 (je Wert ein konstanter Block).
-    colorscale = [
-        [0.00, CAL_COLOR_NONE], [0.25, CAL_COLOR_NONE],
-        [0.25, CAL_COLOR_A],    [0.50, CAL_COLOR_A],
-        [0.50, CAL_COLOR_B],    [0.75, CAL_COLOR_B],
-        [0.75, CAL_COLOR_BOTH], [1.00, CAL_COLOR_BOTH],
-    ]
+    # Diskrete Farbskala für die 7 Codes 0..6 (je Wert ein konstanter Block).
+    n = len(_CAL_COLORS)
+    colorscale = []
+    for idx, color in enumerate(_CAL_COLORS):
+        colorscale.append([idx / n, color])
+        colorscale.append([(idx + 1) / n, color])
+
     fig = go.Figure(
         go.Heatmap(
             z=cal["z"],
@@ -383,7 +482,7 @@ def _combined_calendar_figure(cal: dict):
             xgap=3,
             ygap=3,
             zmin=0,
-            zmax=3,
+            zmax=6,
             colorscale=colorscale,
             showscale=False,
         )
@@ -458,7 +557,7 @@ def render_user_panel(user: str, df) -> None:
             labels={"date": "Datum", "max_weight": "Max. Gewicht (kg)", "exercise": "Übung"},
         )
         fig.update_layout(legend=dict(orientation="h", y=-0.3), margin=dict(t=10))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(_style_fig(fig), use_container_width=True)
 
     st.markdown("##### 🔝 1RM (geschätzt)")
     rm = logic.best_1rm_per_exercise(df)
@@ -471,7 +570,7 @@ def render_user_panel(user: str, df) -> None:
             labels={"date": "Datum", "best_1rm": "≈ 1RM (kg)", "exercise": "Übung"},
         )
         fig.update_layout(legend=dict(orientation="h", y=-0.3), margin=dict(t=10))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(_style_fig(fig), use_container_width=True)
 
     st.markdown("##### 📊 Volumen")
     vol = logic.volume_per_session(df)
@@ -480,13 +579,17 @@ def render_user_panel(user: str, df) -> None:
     else:
         st.caption("Veränderung zur vorigen Einheit")
         vals = list(vol.sort_values("date")["volume"])
-        st.metric("Volumen letzte Einheit", f"{_fmt_num(vals[-1])} kg", delta=_pct_delta_str(vals))
+        st.metric(
+            "Volumen letzte Einheit", f"{_fmt_num(vals[-1])} kg",
+            delta=_pct_delta_str(vals),
+            help="Gesamtvolumen = Summe aus Gewicht × Wiederholungen (nur Arbeitssätze).",
+        )
         fig = px.bar(
             vol, x="date", y="volume",
             labels={"date": "Datum", "volume": "Volumen (kg)"},
         )
         fig.update_layout(margin=dict(t=10))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(_style_fig(fig), use_container_width=True)
 
     # --- Rohdaten je Datum, in Blöcken pro Übung (eingeklappt) -------------
     with st.expander("Alle Sätze anzeigen"):
@@ -559,15 +662,15 @@ def _render_stats(user: str, df) -> None:
     st.markdown(f"**{user}**")
     stats = logic.rest_day_stats(df)
     c1, c2 = st.columns(2)
-    c1.metric("Trainingseinheiten", stats["sessions"])
-    c2.metric("Pausentage gesamt", stats["rest_days"])
+    c1.metric("Trainingseinheiten", stats["sessions"], help="Anzahl unterschiedlicher Trainingstage.")
+    c2.metric("Pausentage gesamt", stats["rest_days"], help="Tage ohne Training im aktiven Zeitraum.")
     c3, c4 = st.columns(2)
-    c3.metric("Ø Tage zwischen Einheiten", stats["avg_gap"])
-    c4.metric("Längste Pause (Tage)", stats["longest_break"])
+    c3.metric("Ø Tage zwischen Einheiten", stats["avg_gap"], help="Durchschnitt; 7 = wöchentlich.")
+    c4.metric("Längste Pause (Tage)", stats["longest_break"], help="Größte Lücke am Stück.")
 
 
 def render_dashboard() -> None:
-    st.header("Auswertung")
+    app_banner("Auswertung")
 
     user_a, user_b = logic.USERS[0], logic.USERS[1]
 
@@ -602,16 +705,20 @@ def render_dashboard() -> None:
             user_a: logic.day_summaries(docs_a),
             user_b: logic.day_summaries(docs_b),
         },
+        today=today,
     )
     if cal is None:
-        st.info("Noch keine Trainings vorhanden.")
+        st.info("Noch keine Trainings vorhanden.", icon="📭")
     else:
         # Legende passend zu den Farben in _combined_calendar_figure.
         st.markdown(
-            f"<span style='color:{CAL_COLOR_A}'>■</span> {user_a} &nbsp; "
-            f"<span style='color:{CAL_COLOR_B}'>■</span> {user_b} &nbsp; "
-            f"<span style='color:{CAL_COLOR_BOTH}'>■</span> beide &nbsp; "
-            f"<span style='color:{CAL_COLOR_NONE}'>■</span> frei",
+            f"<span style='color:{CAL_COLOR_A};font-size:1.1rem'>■</span> {user_a} &nbsp; "
+            f"<span style='color:{CAL_COLOR_B};font-size:1.1rem'>■</span> {user_b} &nbsp; "
+            f"<span style='color:{CAL_COLOR_BOTH};font-size:1.1rem'>■</span> beide &nbsp;&nbsp; "
+            f"<b>Planung ab letztem Training:</b> &nbsp;"
+            f"<span style='color:{CAL_ZONE_GREEN};font-size:1.1rem'>■</span> ≤3 T. &nbsp; "
+            f"<span style='color:{CAL_ZONE_YELLOW};font-size:1.1rem'>■</span> 4–5 T. &nbsp; "
+            f"<span style='color:{CAL_ZONE_RED};font-size:1.1rem'>■</span> >5 T.",
             unsafe_allow_html=True,
         )
         st.plotly_chart(_combined_calendar_figure(cal), use_container_width=True)
@@ -638,7 +745,7 @@ def render_dashboard() -> None:
 # Seite 3: Bearbeiten & Löschen
 # ---------------------------------------------------------------------------
 def render_manage_page(user: str) -> None:
-    st.header("Bearbeiten & Löschen")
+    app_banner("Bearbeiten & Löschen")
     st.caption(f"Eigene Einträge von **{user}** korrigieren oder entfernen.")
 
     try:
@@ -660,7 +767,7 @@ def render_manage_page(user: str) -> None:
         confirm_day = st.checkbox("Ja, wirklich löschen", key=f"confirm_day_{date}")
         if st.button("🗑 Trainingstag löschen", disabled=not confirm_day, key=f"del_day_{date}"):
             n = db.delete_training_day(user, date)
-            st.success(f"{n} Eintrag/Einträge vom {date} gelöscht.")
+            st.toast(f"{n} Eintrag/Einträge vom {date} gelöscht", icon="🗑️")
             st.rerun()
 
     st.divider()
@@ -709,13 +816,13 @@ def render_manage_page(user: str) -> None:
         action_l, action_r = st.columns(2)
         if action_l.button("💾 Aktualisieren", key=f"upd_{date}_{exercise}", type="primary"):
             db.update_exercise(user, date, exercise, edited_sets)
-            st.success(f"{exercise} am {date} aktualisiert.")
+            st.toast(f"{exercise} am {date} aktualisiert", icon="✅")
             st.rerun()
         with action_r:
             confirm_ex = st.checkbox("Löschen bestätigen", key=f"confirm_ex_{date}_{exercise}")
             if st.button("🗑 Übung löschen", key=f"del_ex_{date}_{exercise}", disabled=not confirm_ex):
                 db.delete_exercise(user, date, exercise)
-                st.success(f"{exercise} am {date} gelöscht.")
+                st.toast(f"{exercise} am {date} gelöscht", icon="🗑️")
                 st.rerun()
 
         st.divider()
@@ -725,10 +832,16 @@ def render_manage_page(user: str) -> None:
 # Hauptprogramm
 # ---------------------------------------------------------------------------
 def main() -> None:
+    inject_css()  # globales Styling (auch für die Login-Seite)
+
     # Login vorschalten – ohne gültigen Account geht es nicht weiter.
     user = auth.require_login()
     if not user:
         st.stop()
+
+    # Begrüßung direkt nach erfolgreichem Login (überlebt den Rerun via Toast).
+    if st.session_state.pop("just_logged_in", False):
+        st.toast(f"Willkommen zurück, {user}! 💪", icon="👋")
 
     page = render_sidebar(user)
 

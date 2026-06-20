@@ -439,17 +439,26 @@ def day_summaries(documents: list[dict]) -> dict:
     return result
 
 
-def combined_calendar_matrix(dates_by_user: dict, summaries_by_user: dict | None = None) -> dict | None:
+def combined_calendar_matrix(
+    dates_by_user: dict,
+    summaries_by_user: dict | None = None,
+    today=None,
+) -> dict | None:
     """
     Gemeinsamer Trainingskalender für beide Nutzer (vertikal, eine Zeile pro
-    Kalenderwoche, Spalten Mo–So). Jeder Tag wird codiert, WER trainiert hat.
+    Kalenderwoche, Spalten Mo–So). Jeder Tag wird codiert, WER trainiert hat,
+    und – ab dem letzten Trainingstag – die PLANUNGSZONE fürs nächste Training.
 
     Args:
-        dates_by_user: {userA: set(Timestamps), userB: set(Timestamps)} –
-                       Reihenfolge bestimmt die Farbzuordnung (A, B).
+        dates_by_user: {userA: set(Timestamps), userB: set(Timestamps)}.
+        summaries_by_user: {user: {date_str: summary}} für den Hover.
+        today: heutiges Datum (datetime.date) – steuert den Planungshorizont.
 
     Codierung in z:
         0 = niemand, 1 = nur userA, 2 = nur userB, 3 = beide
+        4 = Planungszone grün (1–3 Tage nach letztem Training)
+        5 = Planungszone gelb (4–5 Tage)
+        6 = Planungszone rot (>5 Tage – überfällig)
 
     Returns dict (z, y_labels, x_labels, text, users) oder None, wenn keine Daten.
     """
@@ -463,7 +472,15 @@ def combined_calendar_matrix(dates_by_user: dict, summaries_by_user: dict | None
     summaries_by_user = summaries_by_user or {}
 
     start = min(all_days_trained)
-    end = max(all_days_trained)
+    last_trained = max(all_days_trained)
+
+    # Planungshorizont nach dem letzten Training: mind. +7 Tage, bei Bedarf bis
+    # heute (gedeckelt auf +28 Tage, damit der Kalender nicht ausufert).
+    horizon = last_trained + pd.Timedelta(days=7)
+    if today is not None:
+        horizon = max(horizon, min(pd.Timestamp(today), last_trained + pd.Timedelta(days=28)))
+    end = max(last_trained, horizon)
+
     start_monday = start - pd.Timedelta(days=start.weekday())
     end_sunday = end + pd.Timedelta(days=6 - end.weekday())
     all_days = pd.date_range(start_monday, end_sunday, freq="D")
@@ -479,27 +496,37 @@ def combined_calendar_matrix(dates_by_user: dict, summaries_by_user: dict | None
             in_a = day in set_a
             in_b = day in set_b
             code = 3 if (in_a and in_b) else (1 if in_a else (2 if in_b else 0))
+
+            # Planungszone für Tage NACH dem letzten Training (ohne Eintrag).
+            zone_note = ""
+            if code == 0 and day > last_trained:
+                gap = (day - last_trained).days
+                if gap <= 3:
+                    code, zone_note = 4, "🟢 Ideal fürs nächste Training (1–3 Tage Pause)"
+                elif gap <= 5:
+                    code, zone_note = 5, "🟡 Bald wieder trainieren (4–5 Tage Pause)"
+                else:
+                    code, zone_note = 6, "🔴 Überfällig (mehr als 5 Tage Pause)"
             z_row.append(code)
 
-            # Hover: Datum + pro Nutzer ein Block mit der Leistung (Übungszeilen).
+            # Hover: Datum + Leistung je Nutzer bzw. Planungshinweis.
             day_key = day.strftime("%Y-%m-%d")
             lines = [f"<b>📅 {day.strftime('%A, %d.%m.%Y')}</b>"]
             for u, hit in ((users[0], in_a), (users[1], in_b)):
                 if hit:
                     summary = summaries_by_user.get(u, {}).get(day_key)
-                    if summary:
-                        lines.append(f"<b>{u}</b><br>{summary}")
-                    else:
-                        lines.append(f"<b>{u}</b>: trainiert")
-            if len(lines) == 1:
+                    lines.append(f"<b>{u}</b><br>{summary}" if summary else f"<b>{u}</b>: trainiert")
+            if zone_note:
+                lines.append(zone_note)
+            elif len(lines) == 1:
                 lines.append("— frei —")
             t_row.append("<br>".join(lines))
         z.append(z_row)
         text.append(t_row)
 
-        # Trainingstage dieser Woche = Tage, an denen jemand trainiert hat.
+        # Trainingstage dieser Woche = nur echte Trainings (Codes 1–3).
         # Ab 2 Trainingstagen (Wochenziel) eine Rakete dahinter.
-        day_count = sum(1 for c in z_row if c > 0)
+        day_count = sum(1 for c in z_row if 1 <= c <= 3)
         rocket = " 🚀" if day_count >= 2 else ""
         y_labels.append(f"{week[0].strftime('%d.%m.')} · {day_count}{rocket}")
 
