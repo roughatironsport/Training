@@ -227,7 +227,7 @@ def _pct_delta_str(values: list) -> str | None:
     return f"{pct:+.1f}%"
 
 
-def _render_change_metrics(series_df, value_col: str) -> None:
+def _render_change_metrics(series_df, value_col: str, help_text: str) -> None:
     """
     Kachelreihe je Übung: aktueller Wert + %-Änderung zur vorigen Einheit
     (grüner ↑ / roter ↓ Pfeil via st.metric).
@@ -242,6 +242,7 @@ def _render_change_metrics(series_df, value_col: str) -> None:
             exercise,
             f"{_fmt_num(values[-1])} kg",
             delta=_pct_delta_str(values),
+            help=help_text,
         )
 
 
@@ -516,7 +517,13 @@ def render_user_panel(user: str, df) -> None:
     # --- Persönliche Bestleistungen ----------------------------------------
     prs = logic.personal_records(df)
     if not prs.empty:
-        st.caption("Persönliche Bestleistungen")
+        st.markdown(
+            "<span title='Bestes Gewicht = höchstes je Arbeitssatz bewegtes "
+            "Gewicht (mit den dabei erreichten Wiederholungen). ≈ 1RM = daraus "
+            "geschätztes 1-Wiederholungs-Maximum (Epley). Datum = wann erreicht.' "
+            "style='cursor:help;font-weight:600'>Persönliche Bestleistungen ⓘ</span>",
+            unsafe_allow_html=True,
+        )
         today = dt.date.today()
 
         def _date_with_ago(ts) -> str:
@@ -546,12 +553,20 @@ def render_user_panel(user: str, df) -> None:
         st.table(pr_display.set_index("Übung"))
 
     # --- Verlaufs-Charts untereinander (keine Tabs mehr) -------------------
-    st.markdown("##### 📈 Gewicht")
+    st.markdown(
+        "<h5 title='Höchstes Arbeitsgewicht je Trainingstag im Zeitverlauf "
+        "(Aufwärmsätze zählen nicht).' style='cursor:help'>📈 Gewicht</h5>",
+        unsafe_allow_html=True,
+    )
     prog = logic.progression_per_exercise(df)
     if prog.empty:
         st.info("Keine Arbeitssätze vorhanden.")
     else:
-        _render_change_metrics(prog, "max_weight")
+        _render_change_metrics(
+            prog, "max_weight",
+            "Höchstes Arbeitsgewicht der letzten Einheit. Pfeil/Prozent = "
+            "Änderung gegenüber der vorherigen Einheit dieser Übung.",
+        )
         fig = px.line(
             prog, x="date", y="max_weight", color="exercise", markers=True,
             labels={"date": "Datum", "max_weight": "Max. Gewicht (kg)", "exercise": "Übung"},
@@ -559,12 +574,21 @@ def render_user_panel(user: str, df) -> None:
         fig.update_layout(legend=dict(orientation="h", y=-0.3), margin=dict(t=10))
         st.plotly_chart(_style_fig(fig), use_container_width=True)
 
-    st.markdown("##### 🔝 1RM (geschätzt)")
+    st.markdown(
+        "<h5 title='Geschätztes 1-Wiederholungs-Maximum (Epley: Gewicht × "
+        "(1 + Wdh./30)) je Trainingstag im Zeitverlauf.' style='cursor:help'>"
+        "🔝 1RM (geschätzt)</h5>",
+        unsafe_allow_html=True,
+    )
     rm = logic.best_1rm_per_exercise(df)
     if rm.empty:
         st.info("Keine Arbeitssätze vorhanden.")
     else:
-        _render_change_metrics(rm, "best_1rm")
+        _render_change_metrics(
+            rm, "best_1rm",
+            "Geschätztes 1-Wiederholungs-Maximum (Epley-Formel) der letzten "
+            "Einheit. Pfeil/Prozent = Änderung gegenüber der vorherigen.",
+        )
         fig = px.line(
             rm, x="date", y="best_1rm", color="exercise", markers=True,
             labels={"date": "Datum", "best_1rm": "≈ 1RM (kg)", "exercise": "Übung"},
@@ -572,7 +596,11 @@ def render_user_panel(user: str, df) -> None:
         fig.update_layout(legend=dict(orientation="h", y=-0.3), margin=dict(t=10))
         st.plotly_chart(_style_fig(fig), use_container_width=True)
 
-    st.markdown("##### 📊 Volumen")
+    st.markdown(
+        "<h5 title='Gesamtvolumen je Trainingstag = Summe aus Gewicht × "
+        "Wiederholungen aller Arbeitssätze.' style='cursor:help'>📊 Volumen</h5>",
+        unsafe_allow_html=True,
+    )
     vol = logic.volume_per_session(df)
     if vol.empty:
         st.info("Keine Arbeitssätze vorhanden.")
@@ -663,16 +691,22 @@ def _last_training_banner(user: str, df, today: dt.date) -> None:
             vcolor, arrow = "#d62728", "▼"
         else:
             vcolor, arrow = "#888888", "="
+        vol_tip = (
+            "Veränderung des Gesamtvolumens (Summe aus Gewicht × Wiederholungen "
+            "aller Arbeitssätze) der letzten Trainingseinheit gegenüber der "
+            "vorherigen. Positiv = mehr Gesamtbelastung."
+        )
         vol_line = (
-            f"<div style='font-size:1.0rem;font-weight:600;color:{vcolor}'>"
+            f"<div title='{vol_tip}' style='font-size:1.0rem;font-weight:600;color:{vcolor};cursor:help'>"
             f"{arrow} {pct:+.1f}% Volumen ggü. vorherigem Training</div>"
         )
     elif len(vol) == 1:
         vol_line = "<div style='font-size:0.9rem;color:#999'>erstes Training – kein Vergleich</div>"
 
+    time_tip = "Anzahl Tage seit dem letzten Trainingstag dieses Nutzers."
     st.markdown(
         f"<div style='font-size:1.0rem;color:#666'>{user} – letztes Training</div>"
-        f"<div style='font-size:2.3rem;font-weight:800;color:{color};line-height:1.1'>{text}</div>"
+        f"<div title='{time_tip}' style='font-size:2.3rem;font-weight:800;color:{color};line-height:1.1;cursor:help'>{text}</div>"
         f"{vol_line}",
         unsafe_allow_html=True,
     )
@@ -731,16 +765,26 @@ def render_dashboard() -> None:
     if cal is None:
         st.info("Noch keine Trainings vorhanden.", icon="📭")
     else:
-        # Legende passend zu den Farben in _combined_calendar_figure.
+        # Legende mit Hover-Tooltips (title) je Eintrag.
         st.markdown(
-            f"<span style='color:{CAL_COLOR_A};font-size:1.1rem'>■</span> {user_a} &nbsp; "
-            f"<span style='color:{CAL_COLOR_B};font-size:1.1rem'>■</span> {user_b} &nbsp; "
-            f"<span style='color:{CAL_COLOR_BOTH};font-size:1.1rem'>■</span> beide &nbsp;&nbsp; "
+            f"<span title='Tage, an denen nur {user_a} trainiert hat' style='cursor:help'>"
+            f"<span style='color:{CAL_COLOR_A};font-size:1.1rem'>■</span> {user_a}</span> &nbsp; "
+            f"<span title='Tage, an denen nur {user_b} trainiert hat' style='cursor:help'>"
+            f"<span style='color:{CAL_COLOR_B};font-size:1.1rem'>■</span> {user_b}</span> &nbsp; "
+            f"<span title='Tage, an denen beide am selben Tag trainiert haben' style='cursor:help'>"
+            f"<span style='color:{CAL_COLOR_BOTH};font-size:1.1rem'>■</span> beide</span> &nbsp;&nbsp; "
             f"<b>Planung ab letztem Training:</b> &nbsp;"
-            f"<span style='color:{CAL_ZONE_GREEN};font-size:1.1rem'>■</span> ideal (3–5 T.) &nbsp; "
-            f"<span style='color:{CAL_ZONE_YELLOW};font-size:1.1rem'>■</span> Übergang (2 / 6–7 T.) &nbsp; "
-            f"<span style='color:{CAL_ZONE_RED};font-size:1.1rem'>■</span> zu früh / überfällig (1 / 8+ T.)",
+            f"<span title='3–5 Tage Pause: ideales Zeitfenster fürs nächste Training' style='cursor:help'>"
+            f"<span style='color:{CAL_ZONE_GREEN};font-size:1.1rem'>■</span> ideal (3–5 T.)</span> &nbsp; "
+            f"<span title='2 Tage (fast bereit) bzw. 6–7 Tage (langsam wieder Zeit)' style='cursor:help'>"
+            f"<span style='color:{CAL_ZONE_YELLOW};font-size:1.1rem'>■</span> Übergang (2 / 6–7 T.)</span> &nbsp; "
+            f"<span title='1 Tag (zu früh, Regeneration) bzw. ab 8 Tagen (überfällig)' style='cursor:help'>"
+            f"<span style='color:{CAL_ZONE_RED};font-size:1.1rem'>■</span> zu früh / überfällig (1 / 8+ T.)</span>",
             unsafe_allow_html=True,
+        )
+        st.caption(
+            "Eine Zeile = eine Woche. Zahl hinter dem Datum = Trainingstage der Woche, "
+            "🚀 ab 2. Blasse Felder rechts = Empfehlung fürs nächste Training (Hover für Details)."
         )
         st.plotly_chart(_combined_calendar_figure(cal), use_container_width=True)
 
