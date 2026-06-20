@@ -88,11 +88,13 @@ def render_input_page(user: str, date: dt.date) -> None:
             for col, (set_type, label) in zip(cols, logic.SET_LAYOUT):
                 with col:
                     st.markdown(f"**{label}**")
-                    # Gewicht als Dropdown in 2,5-kg-Schritten (Default 0 kg).
+                    # Gewicht als Dropdown in 2,5-kg-Schritten, vorbelegt je
+                    # Nutzer/Übung/Satztyp (siehe logic.WEIGHT_DEFAULTS).
+                    default_w = logic.default_weight(user, exercise, set_type)
                     weight = st.selectbox(
                         "Gewicht (kg)",
                         logic.WEIGHT_OPTIONS,
-                        index=0,
+                        index=logic.WEIGHT_OPTIONS.index(default_w),
                         format_func=lambda w: f"{w:g} kg",
                         key=f"{exercise}_{label}_w",
                     )
@@ -270,6 +272,35 @@ def render_user_panel(user: str, df) -> None:
         )
 
 
+def _last_training_banner(user: str, df, today: dt.date) -> None:
+    """Große, fette, ampelfarbene Anzeige: Zeit seit dem letzten Training."""
+    days = logic.days_since_last_training(df, today)
+
+    if days is None:
+        color, text = "#888888", "noch kein Training"
+    else:
+        # Ampel: grün <=3 Tage, gelb <=5 Tage, sonst rot.
+        if days <= 3:
+            color = "#2ca02c"   # grün
+        elif days <= 5:
+            color = "#e0a800"   # gelb/amber
+        else:
+            color = "#d62728"   # rot
+
+        if days == 0:
+            text = "heute trainiert"
+        elif days == 1:
+            text = "vor 1 Tag"
+        else:
+            text = f"vor {days} Tagen"
+
+    st.markdown(
+        f"<div style='font-size:1.0rem;color:#666'>{user} – letztes Training</div>"
+        f"<div style='font-size:2.3rem;font-weight:800;color:{color};line-height:1.1'>{text}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _render_stats(user: str, df) -> None:
     """Kennzahlen-Block (Einheiten + Pausen) für einen Nutzer."""
     st.markdown(f"**{user}**")
@@ -294,6 +325,16 @@ def render_dashboard() -> None:
     except Exception as exc:  # noqa: BLE001
         st.error(f"Daten konnten nicht geladen werden: {exc}")
         return
+
+    # --- Zeit seit letztem Training (auffällig, ampelfarben) ----------------
+    today = dt.date.today()
+    ban_left, ban_right = st.columns(2)
+    with ban_left:
+        _last_training_banner(user_a, df_a, today)
+    with ban_right:
+        _last_training_banner(user_b, df_b, today)
+
+    st.divider()
 
     # --- Gemeinsamer Trainingskalender (volle Breite) ----------------------
     st.subheader("Gemeinsamer Trainingskalender")

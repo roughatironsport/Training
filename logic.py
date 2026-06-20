@@ -31,6 +31,30 @@ WEIGHT_OPTIONS = [round(i * 2.5, 1) for i in range(0, 121)]
 # Wiederholungen ganzzahlig von 0 bis 15.
 REP_OPTIONS = list(range(0, 16))
 
+# Vorbelegung der ARBEITSSATZ-Gewichte je Nutzer und Übung (in kg).
+# Der Aufwärmsatz wird automatisch auf die Hälfte gesetzt (siehe default_weight).
+WEIGHT_DEFAULTS = {
+    "Patric":  {"Deadlift": 200, "Bench Press": 120, "Squat": 100},
+    "Sandeep": {"Deadlift": 150, "Bench Press": 80,  "Squat": 90},
+}
+
+
+def _snap_to_option(value: float) -> float:
+    """Rundet einen Wert auf den nächstgelegenen erlaubten Gewichtswert."""
+    return min(WEIGHT_OPTIONS, key=lambda w: abs(w - value))
+
+
+def default_weight(user: str, exercise: str, set_type: str) -> float:
+    """
+    Liefert das Default-Gewicht für ein Dropdown – passend zu Nutzer, Übung
+    und Satztyp. Arbeitssatz = hinterlegter Wert, Aufwärmsatz = die Hälfte
+    (auf 2,5 kg gerundet). Fällt auf 0 zurück, wenn nichts hinterlegt ist.
+    """
+    base = WEIGHT_DEFAULTS.get(user, {}).get(exercise, 0)
+    if set_type == "warmup":
+        base = base * 0.5
+    return _snap_to_option(base)
+
 
 def estimate_1rm(weight: float, reps: int) -> float:
     """
@@ -196,6 +220,20 @@ def training_dates(df: pd.DataFrame) -> list:
     if df.empty:
         return []
     return sorted(set(df["date"].dt.normalize()))
+
+
+def days_since_last_training(df: pd.DataFrame, today) -> int | None:
+    """
+    Tage seit dem letzten Training. None, wenn noch kein Training existiert.
+
+    Args:
+        today: heutiges Datum (datetime.date).
+    """
+    dates = training_dates(df)
+    if not dates:
+        return None
+    last_date = max(dates).date()  # Timestamp -> date
+    return (today - last_date).days
 
 
 def rest_day_stats(df: pd.DataFrame) -> dict:
