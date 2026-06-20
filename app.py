@@ -448,14 +448,16 @@ def render_input_page(user: str) -> None:
 # Seite 2: Dashboard / Auswertung
 # ---------------------------------------------------------------------------
 # Farbzuordnung für den gemeinsamen Kalender (muss zur Legende passen).
-CAL_COLOR_A = "#1f77b4"     # nur User A (Patric) – blau
-CAL_COLOR_B = "#ff7f0e"     # nur User B (Sandeep) – orange
-CAL_COLOR_BOTH = "#2ca02c"  # beide – grün
-CAL_COLOR_NONE = "#ebedf0"  # niemand – grau
+CAL_COLOR_A = "#6366f1"     # nur User A (Patric) – Indigo
+CAL_COLOR_B = "#f59e0b"     # nur User B (Sandeep) – Amber
+CAL_COLOR_BOTH = "#10b981"  # beide – Emerald
+CAL_COLOR_NONE = "#eef2f7"  # niemand – sehr helles Grau
 # Planungszonen ab letztem Training (blass, damit klar von "trainiert" trennbar).
-CAL_ZONE_GREEN = "#c7eccb"   # 1–3 Tage Pause
-CAL_ZONE_YELLOW = "#fdeeba"  # 4–5 Tage Pause
-CAL_ZONE_RED = "#f6c6c6"     # >5 Tage Pause
+CAL_ZONE_GREEN = "#bbf7d0"   # ideales Zeitfenster
+CAL_ZONE_YELLOW = "#fde68a"  # Übergang
+CAL_ZONE_RED = "#fecaca"     # zu früh / überfällig
+# Markierungsfarbe für den heutigen Tag.
+CAL_TODAY = "#0f172a"        # kräftiges Slate (Rahmen)
 
 # Reihenfolge = Codes 0..6 (siehe logic.combined_calendar_matrix).
 _CAL_COLORS = [
@@ -480,8 +482,8 @@ def _combined_calendar_figure(cal: dict):
             y=cal["y_labels"],
             text=cal["text"],
             hoverinfo="text",
-            xgap=3,
-            ygap=3,
+            xgap=5,
+            ygap=5,
             zmin=0,
             zmax=6,
             colorscale=colorscale,
@@ -489,7 +491,7 @@ def _combined_calendar_figure(cal: dict):
         )
     )
     fig.update_layout(
-        height=max(180, 26 * len(cal["y_labels"]) + 50),
+        height=max(240, 42 * len(cal["y_labels"]) + 60),
         margin=dict(l=10, r=10, t=20, b=10),
         # Punkt 2: breiteres, schöneres Tooltip.
         hoverlabel=dict(
@@ -518,10 +520,10 @@ def _combined_calendar_figure(cal: dict):
                 continue
             fig.add_annotation(
                 x=x_labels[c], y=y_labels[r], text=icon,
-                showarrow=False, font=dict(size=12),
+                showarrow=False, font=dict(size=24),
             )
 
-    # Heutigen Tag immer markieren (Rahmen um die Zelle + Pin).
+    # Heutigen Tag immer markieren – nur Rahmen, kein Text.
     today_xy = cal.get("today_xy")
     if today_xy is not None:
         tx, ty = today_xy
@@ -530,13 +532,9 @@ def _combined_calendar_figure(cal: dict):
         fig.add_shape(
             type="rect",
             x0=c - 0.5, x1=c + 0.5, y0=r - 0.5, y1=r + 0.5,
-            line=dict(color="#111827", width=2.5),
+            line=dict(color=CAL_TODAY, width=3),
             fillcolor="rgba(0,0,0,0)",
             xref="x", yref="y", layer="above",
-        )
-        fig.add_annotation(
-            x=tx, y=ty, text="heute", showarrow=False, yshift=-13,
-            font=dict(size=9, color="#111827"),
         )
     return fig
 
@@ -819,7 +817,7 @@ def render_dashboard() -> None:
         )
         st.caption(
             "Eine Zeile = eine Woche. Zahl hinter dem Datum = Trainingstage der Woche, "
-            "🚀 ab 2. 🏋️ = trainiert (🏋️🏋️ = beide). Schwarzer Rahmen = heute. "
+            "🚀 ab 2. 🏋️ = trainiert (🏋️🏋️ = beide). Dunkler Rahmen = heute. "
             "Blasse Felder = Empfehlung fürs nächste Training (Hover für Details)."
         )
         st.plotly_chart(_combined_calendar_figure(cal), use_container_width=True)
