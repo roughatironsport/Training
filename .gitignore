@@ -1,0 +1,9 @@
+# Streamlit-Secrets NIEMALS committen (enthält das DB-Passwort!)
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env

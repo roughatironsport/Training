@@ -1,0 +1,12 @@
+# Web-Framework für die UI
+streamlit>=1.40.0
+
+# MongoDB-Treiber + dnspython (für mongodb+srv://-Strings von Atlas zwingend nötig).
+pymongo>=4.8.0
+dnspython>=2.6.0
+
+# Datenaufbereitung
+pandas>=2.2.0
+
+# Interaktive Charts
+plotly>=5.24.0
