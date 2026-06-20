@@ -16,6 +16,7 @@ Die App teilt sich klar auf:
 
 import datetime as dt
 
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
@@ -79,6 +80,12 @@ def _adjust_value(key: str, delta: float, options: list) -> None:
     current = st.session_state.get(key, options[0])
     target = current + delta
     st.session_state[key] = min(options, key=lambda o: abs(o - target))
+
+
+def _fmt_num(x: float) -> str:
+    """Zahl auf 0,5 gerundet: ganzzahlig ohne Nachkommastelle, sonst mit .5."""
+    rounded = round(x * 2) / 2
+    return f"{int(rounded)}" if rounded == int(rounded) else f"{rounded:.1f}"
 
 
 def _delta_str(new_v: float, prev_v: float, unit: str, decimals: int) -> str:
@@ -302,15 +309,19 @@ def render_user_panel(user: str, df) -> None:
     prs = logic.personal_records(df)
     if not prs.empty:
         st.caption("Persönliche Bestleistungen")
-        pr_table = prs.rename(
-            columns={
-                "exercise": "Übung",
-                "max_weight": "Max (kg)",
-                "best_1rm": "≈ 1RM (kg)",
+        # Bestes Gewicht inkl. Wiederholungen; Zahlen auf 0,5 gerundet.
+        pr_display = pd.DataFrame(
+            {
+                "Übung": prs["exercise"],
+                "Bestes Gewicht": [
+                    f"{_fmt_num(w)} kg × {r}"
+                    for w, r in zip(prs["max_weight"], prs["reps_at_max"])
+                ],
+                "≈ 1RM (kg)": [_fmt_num(v) for v in prs["best_1rm"]],
             }
         )
         # st.table (server-seitig) statt st.dataframe -> kein dynamisches JS-Modul.
-        st.table(pr_table.set_index("Übung"))
+        st.table(pr_display.set_index("Übung"))
 
     # --- Verlaufs-Charts in Tabs -------------------------------------------
     tab_weight, tab_1rm, tab_volume = st.tabs(["📈 Gewicht", "🔝 1RM", "📊 Volumen"])

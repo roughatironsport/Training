@@ -426,7 +426,12 @@ def combined_calendar_matrix(dates_by_user: dict) -> dict | None:
             t_row.append(f"{day.strftime('%a %d.%m.%Y')} · {label}")
         z.append(z_row)
         text.append(t_row)
-        y_labels.append(week[0].strftime("%d.%m."))
+
+        # Trainingstage dieser Woche = Tage, an denen jemand trainiert hat.
+        # Ab 2 Trainingstagen (Wochenziel) eine Rakete dahinter.
+        day_count = sum(1 for c in z_row if c > 0)
+        rocket = " 🚀" if day_count >= 2 else ""
+        y_labels.append(f"{week[0].strftime('%d.%m.')} · {day_count}{rocket}")
 
     return {
         "z": z,
@@ -439,15 +444,28 @@ def combined_calendar_matrix(dates_by_user: dict) -> dict | None:
 
 def personal_records(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Persönliche Bestleistungen je Übung: höchstes Arbeitsgewicht und
-    bestes geschätztes 1RM. Für die Kennzahl-Kacheln im Dashboard.
+    Persönliche Bestleistungen je Übung – immer ausgehend vom Satz mit dem
+    HÖCHSTEN Arbeitsgewicht (bei Gleichstand der mit den meisten Wiederholungen).
 
-    Spalten: exercise, max_weight, best_1rm
+    Spalten: exercise, max_weight, reps_at_max, best_1rm
+    (best_1rm wird aus genau diesem Top-Satz nach Epley berechnet.)
     """
     ws = working_sets(df)
     if ws.empty:
-        return pd.DataFrame(columns=["exercise", "max_weight", "best_1rm"])
-    return (
-        ws.groupby("exercise", as_index=False)
-        .agg(max_weight=("weight", "max"), best_1rm=("est_1rm", "max"))
-    )
+        return pd.DataFrame(columns=["exercise", "max_weight", "reps_at_max", "best_1rm"])
+
+    rows = []
+    for exercise, group in ws.groupby("exercise"):
+        # Höchstes Gewicht zuerst, bei Gleichstand die meisten Wiederholungen.
+        top = group.sort_values(["weight", "reps"], ascending=False).iloc[0]
+        weight = float(top["weight"])
+        reps = int(top["reps"])
+        rows.append(
+            {
+                "exercise": exercise,
+                "max_weight": weight,
+                "reps_at_max": reps,
+                "best_1rm": estimate_1rm(weight, reps),
+            }
+        )
+    return pd.DataFrame(rows)
